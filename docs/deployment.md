@@ -136,6 +136,24 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 | 坐标标定 / 区域落点 | 覆盖 `data-json/` 里的文件 | 下个请求即生效 |
 | 题库快照 | 覆盖 `data-json/map-data.json` | 加 `FORCE_SEED=1` 重启一次（或删 `data/` 里的 SQLite 重启）后导入 |
 
+### 启动自检与自动补全
+
+容器入口（`deploy/docker-entrypoint.sh`）在启动服务前会自检一次，**缺什么补什么**：
+
+| 检查项 | 缺失时的行为 | 相关变量 |
+| --- | --- | --- |
+| 底图瓦片（`$TILES_DIR/0`） | 从 `codeload.github.com/<MAPSOURCE_REPO>` 下载并解压到 `$TILES_DIR` | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
+| 题库快照 / 坐标标定 / 区域落点 | 从 `raw.githubusercontent.com/<GIT_REPO>/<GIT_BRANCH>/…` 下载到 `$DATA_JSON_CACHE_DIR`，并把对应环境变量指过去；下载不到则回退到镜像内置的那份 | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH`、`DATA_JSON_CACHE_DIR` |
+
+要点：
+
+- 已经放好文件的挂载目录**优先级最高**，自检不会覆盖你的数据。
+- 自动下载需要**写入权限**：瓦片目录必须是可写挂载（`./tiles:/srv/tiles`，不要 `:ro`）；
+  写不进去且 `REQUIRE_TILES=1` 时容器会带着明确原因退出，而不是起在半残状态。
+- 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH` 设成 `0`，
+  自己把 `tiles/`、`data-json/` 准备好即可。
+- `DATA_JSON_CACHE_DIR` 默认在容器内的 `/tmp`（随容器生命周期）；想持久化就挂一个卷到它。
+
 ---
 
 ---

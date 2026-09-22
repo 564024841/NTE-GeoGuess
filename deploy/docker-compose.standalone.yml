@@ -34,6 +34,12 @@ services:
       SEED_IMAGES_DIR: /srv/seed-images/locations
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: "/mapsource-tiles/{z}/{x}/{y}.jpg"
+      # 启动自检：缺瓦片 / 缺内容数据时自动下载补全（=0 关闭）
+      TILES_AUTO_FETCH: "1"
+      DATA_JSON_AUTO_FETCH: "1"
+      MAPSOURCE_REPO: "Maa-NTE/MapSource"
+      GIT_REPO: "564024841/NTE-GeoGuess"
+      GIT_BRANCH: "main"
 
       # 内容数据：不在 git 上更新，从 ./data-json 挂进来
       SEED_DATA_FILE: /srv/data-json/map-data.json

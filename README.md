@@ -217,6 +217,9 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 环境变量全部内联，卷用相对路径（宝塔会解析到 `/www/server/panel/data/compose/<项目名>/`）。
 细节见 [`docs/deployment.md`](docs/deployment.md) 的「宝塔面板：用 Compose 项目部署」。
 
+容器启动时会先自检：**瓦片目录为空、或内容数据 JSON 不存在，就自动从仓库下载补全**
+（`TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭，下载源支持内网镜像）。
+
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
 它会自动拉新镜像并重启，无需手工干预。

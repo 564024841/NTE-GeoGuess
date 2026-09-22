@@ -40,6 +40,12 @@ services:
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: ${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}
       TILE_REDIRECT_BASE: ${TILE_REDIRECT_BASE:-}
+      # 启动自检：缺瓦片 / 缺内容数据时自动下载补全（=0 关闭）
+      TILES_AUTO_FETCH: ${TILES_AUTO_FETCH:-1}
+      DATA_JSON_AUTO_FETCH: ${DATA_JSON_AUTO_FETCH:-1}
+      MAPSOURCE_REPO: ${MAPSOURCE_REPO:-Maa-NTE/MapSource}
+      GIT_REPO: ${GIT_REPO:-564024841/NTE-GeoGuess}
+      GIT_BRANCH: ${GIT_BRANCH:-main}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8787}:8080"
     volumes:
