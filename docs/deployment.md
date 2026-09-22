@@ -46,6 +46,19 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 生产建议设 `REQUIRE_TILES=1`（compose 默认已开）：瓦片缺失或不完整时服务端**拒绝启动**，
 避免「服务起来了但底图全黑」这种难排查的状态。
 
+### 镜像里的瓦片：两种做法
+
+镜像**默认不含瓦片**（CI 的构建上下文里没有 `MapSource/`，它是 gitignore 的独立仓库），
+`/srv/tiles` 是空目录。两种补法：
+
+| 做法 | 怎么用 | 代价 |
+| --- | --- | --- |
+| **宿主目录挂载**（默认） | compose 里 `TILES_HOST_DIR=<宿主瓦片目录>`，只读挂到 `/srv/tiles` | 需要先在宿主上拉一次瓦片（`npm run tiles:fetch`） |
+| **容器首次启动自动拉取** | `.env` 里设 `TILES_AUTO_FETCH=1`，并把 compose 里 `/srv/tiles` 的挂载换成一个可写卷 | 首次启动需要外网（约 30MB，只拉一次）；镜像保持精简 |
+
+自动拉取的实现见 `deploy/docker-entrypoint.sh`（默认关闭，`TILES_AUTO_FETCH=1` 才触发；
+可通过 `MAPSOURCE_REPO` / `MAPSOURCE_BRANCH` 指向内网镜像）。
+
 ---
 
 ## 方式一：Docker Compose（推荐）
