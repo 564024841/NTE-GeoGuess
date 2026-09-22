@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from '@nte-geoguess/shared/constants'
 import L from '../utils/leaflet'
 import { persistMapView, readStoredMapView } from '../utils/storage'
@@ -229,7 +229,8 @@ export function useMap({
       keepBuffer: 3,
     }).addTo(instance)
 
-    L.control.zoom({ position: 'bottomright' }).addTo(instance)
+    // 不挂 Leaflet 自带的缩放控件：左下角 HUD（MapHud.vue）已经有 − / +（+ 框选/复位），
+    // 右下角再来一套既重复、风格也不一致。
 
     markerLayer = createMarkerLayer().addTo(instance)
     overlayLayer = L.layerGroup().addTo(instance)

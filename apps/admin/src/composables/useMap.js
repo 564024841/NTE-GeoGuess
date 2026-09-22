@@ -132,7 +132,8 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick, regionPositi
       keepBuffer: 3,
     }).addTo(instance)
 
-    L.control.zoom({ position: 'bottomright' }).addTo(instance)
+    // 不挂 Leaflet 自带的缩放控件：左下角 HUD（MapHud.vue）已经有 − / + / 复位，
+    // 右下角再来一套既重复、风格也不一致。
 
     pinLayer = L.layerGroup().addTo(instance)
     regionLabelLayer = L.layerGroup()

@@ -43,7 +43,7 @@ npm run preview --workspace apps/admin  # http://127.0.0.1:4175
 | 功能 | 说明 | 用到的接口 |
 | --- | --- | --- |
 | 登录 / 退出 | 启动先探测会话；失败显示「密码不正确（还可尝试 N 次）」，限流显示还要等多少秒 | `GET /api/admin/session`、`POST /api/admin/login`、`POST /api/admin/logout` |
-| 地图选点 | 底图参数与游戏站完全一致（CRS.Simple、瓦片 512、minZoom -3、maxZoom 1），并画出**区域名标签**（向阳岛 / 米格尔区 / 薄暮区…）；点地图即设定答案位置，面板回显**游戏坐标 / 底图像素 / 自动判定区域** | `GET /api/bootstrap` |
+| 地图选点 | 底图参数与游戏站完全一致（CRS.Simple、瓦片 512、minZoom -3、maxZoom 1），并画出**区域名标签**（向阳岛 / 米格尔区 / 薄暮区…）；点地图即设定答案位置，面板回显**游戏坐标 / 底图像素 / 自动判定区域**。缩放只在左下角 HUD（`−` / `＋` / 复位），没有 Leaflet 自带的右下角控件 | `GET /api/bootstrap` |
 | 新建题目 | 点击或拖拽上传截图（PNG/JPEG/WebP/GIF/AVIF，≤ 8 MB）、填名称/备注、点选坐标 → **按坐标自动定区域**（写好「区域」并把「分类」切到对应区域分类，均可手动改）→ 「保存到待提交清单」，可连续加多题 → 一次性提交 | `POST /api/admin/questions/batch` |
 | 题库列表 | 关键字搜索（名称/ID，300ms 防抖）、按来源筛选（后台题库 / 内置点位 / 全部）、分页；每项显示缩略图、名称、坐标、分类、来源、创建时间 | `GET /api/admin/questions` |
 | 编辑题目 | 改文字字段、换截图、重新在地图上点选坐标；「保存修改」整体替换 `images` | `PUT /api/admin/questions/:id` |

@@ -247,6 +247,10 @@ export const markerClusterReady = import('leaflet.markercluster')
 本项目改为：**字段有真实值时用它，否则按地图九宫格自动分区**
 （见 `src/game/puzzles.js` 的 `buildRegionTable`），并在 UI 上说明是自动分区。
 
+> 后来改掉了：九宫格方位不是游戏里的真实区域，区域筛选直接改用「区域分类」，
+> 476 道题的归属由坐标 kNN 归类算出来（`packages/shared/src/regionInference.js` +
+> `npm run classify:regions`），细节见 README 的「数据说明与已知限制」。
+
 ### 4.5 数据自检必须做
 
 原项目 README 的修改流程要求每次提交前跑

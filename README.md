@@ -115,6 +115,8 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
   放大约到 -2 及以上才出现（初始整图视图下 7 个标签会糊在一起），
   可在开始页用「在地图上标注区域名」开关关掉。标签不拦截点击，不会影响落点。
   落点在 `packages/shared/data/region-positions.json`，改位置只改这个文件。
+- **缩放统一走左下角的 HUD 按钮**（`−` / `＋` / 复位），不挂 Leaflet 自带的右下角缩放控件——
+  两套按钮既重复、风格也不一致。后台站同理（左下角 HUD + 复位）。
 - 走完整局后展示总分、平均偏差与逐题复盘；战绩存在浏览器 localStorage。
 - 快捷键：`空格` 确认落点 / 下一题，`R` 换一批题。
 
@@ -233,7 +235,7 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 容器启动时会先自检：**瓦片目录里没有 jpg、题面截图目录里没有图、或内容数据 JSON 不存在，就自动下载补全**
 （`TILES_AUTO_FETCH` / `SEED_IMAGES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭成"缺了就报错"）。
 补全只写进挂载的宿主目录；**目录不可写或下载失败 = 直接退出并说明原因**，
-没有"退到 `/tmp`"或"用镜像里那份旧骨架"的静默兜底。
+没有"退到 `/tmp`"或"偷偷用镜像里的旧副本"（镜像里现在也没有这些数据了）这种静默兜底。
 
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
@@ -252,7 +254,8 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
 
 ## 数据说明与已知限制
 
-1. **内置题源 476 道；区域归属是「按坐标算出来」的，仓库里的骨架仍是未标注。**
+1. **内置题源 476 道；区域归属是「按坐标算出来」的**（仓库里那份快照已经带上分类结果，
+   随时可用脚本重算）。
    原始数据 1622 个点位里有 1222 个的 `district` 是占位值「全地图」，
    而 476 道有截图的题全部落在这一批里；400 个有真实区域名的点位则都没有截图
    （它们是谕石之类的纯地图标记）。无截图、出不了题的点位已全部删除，
@@ -260,8 +263,9 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
    所以「按区域出题」得先归类：`npm run classify:regions` 用
    `packages/shared/data/region-reference.json` 里那 400 个参照点做 kNN 投票（参考点留一法自检 96.8%），
    把 476 道题落到 向阳岛 25 / 新赫兰德区 120 / 未闻浦 15 / 桥间地 66 / 米格尔区 124 /
-   绘空町 121 / 薄暮区 5。这个结果**只写进部署侧的数据**（`data-json/map-data.json` + SQLite），
-   仓库里的 `map-data.json` 保持「最基本的骨架」，需要时用脚本重新生成。
+   绘空町 121 / 薄暮区 5。这份结果写在仓库的快照里，也写进部署侧的数据
+   （`data-json/map-data.json` + SQLite）；改了参数或题源就重跑脚本，
+   再加 `--report=rows.json` 会把逐题明细（旧/新归属、置信度、离最近参照点距离）一起落盘。
 
 2. **数据整理有可复现的脚本，都是「不加参数即演练、加 `--apply` 才执行」，幂等。**
    - `npm run migrate:regions`：按区域名重建分类、删除既无区域名又无截图的占位点位。
@@ -291,7 +295,7 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
    生产用 `DATA_DIR` 指向挂载卷。
 
 4. **`district` 字段不可用。**
-   全部为「全地图」，所以区域筛选用的是按地图九宫格自动分区。
+   全部为「全地图」，所以区域筛选走的是**区域分类**（由坐标 kNN 归类生成，见上面第 1 条）。
    一旦数据里出现真实区域值，`packages/shared/src/puzzles.js` 会自动优先使用真实值。
 
 5. **底图不完整也不影响游玩。**
