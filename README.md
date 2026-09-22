@@ -248,7 +248,7 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
    （它们是谕石之类的纯地图标记）。无截图、出不了题的点位已全部删除，
    现在是 **476 个点位 / 476 道可出题 / 8 个分类**。
    所以「按区域出题」得先归类：`npm run classify:regions` 用
-   `scripts/data/region-reference.json` 里那 400 个参考点做 kNN 投票（参考点留一法自检 96.8%），
+   `packages/shared/data/region-reference.json` 里那 400 个参照点做 kNN 投票（参考点留一法自检 96.8%），
    把 476 道题落到 向阳岛 25 / 新赫兰德区 120 / 未闻浦 15 / 桥间地 66 / 米格尔区 124 /
    绘空町 121 / 薄暮区 5。这个结果**只写进部署侧的数据**（`data-json/map-data.json` + SQLite），
    仓库里的 `map-data.json` 保持「最基本的骨架」，需要时用脚本重新生成。
@@ -258,8 +258,9 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
    - `npm run add:region-twilight`：新增「薄暮区」分类，并把落在已知区域范围之外的
      未标注点位改归该区。
    - `npm run classify:regions`：按坐标把题归到区域（kNN + 覆盖范围规则），参考点在
-     `scripts/data/region-reference.json`（来自 MaaNTE-Map）。加 `--cv` 会打印参考点留一法自检准确率；
-     执行时会备份、写盘并同步数据库。
+     `packages/shared/data/region-reference.json`（来自 MaaNTE-Map），推断规则在
+     `packages/shared/src/regionInference.js` —— 后台出题时的自动归类用的是同一份实现。
+     加 `--cv` 会打印参照点留一法自检准确率；执行时会备份、写盘并同步数据库。
    - `npm run remove:imageless`：删除所有无截图点位（出不了题的地图标记）。
    除 `remove:imageless` 外都会先备份到 `data/backups/`；`remove:imageless` 按使用者要求
    不做自动备份，但会把删掉的点位完整写进 `data/removed-imageless-*.json` 以便恢复。
