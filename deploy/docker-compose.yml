@@ -57,4 +57,4 @@ services:
       - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles
       # 内容数据目录（只读）：map-data.json / navi-coordinate-calibration.json /
       # region-positions.json 放这里；镜像里只带一份「最基本」的骨架。
-      - ${SHARED_DATA_HOST_DIR:-../shared-data}:/srv/data-json:ro
+      - ${SHARED_DATA_HOST_DIR:-../shared-data}:/srv/data-json

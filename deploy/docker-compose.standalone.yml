@@ -52,7 +52,7 @@ services:
     volumes:
       - ./data:/data
       - ./tiles:/srv/tiles
-      - ./data-json:/srv/data-json:ro
+      - ./data-json:/srv/data-json
     labels:
       # watchtower 带 --label-enable 时会自动拉新镜像重启（不带则会更新所有容器）
       com.centurylinklabs.watchtower.enable: "true"

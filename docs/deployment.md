@@ -110,7 +110,7 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
     volumes:
       - ./data:/data                    # → <项目目录>/data
       - ./tiles:/srv/tiles              # → <项目目录>/tiles
-      - ./data-json:/srv/data-json:ro   # → <项目目录>/data-json
+      - ./data-json:/srv/data-json      # → <项目目录>/data-json
 ```
 
 也就是要在项目目录里准备好：
@@ -118,8 +118,15 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 | 目录 | 内容 | 权限 |
 | --- | --- | --- |
 | `data/` | SQLite + 后台上传截图 | 容器以 uid 1000 写入：`chown -R 1000:1000 data` |
-| `tiles/` | 完整底图瓦片（`z=-6..0` 的 `{z}/{x}/{y}.jpg`） | 只读挂载，可读即可 |
-| `data-json/` | `map-data.json`、`navi-coordinate-calibration.json`、`region-positions.json` | 只读挂载，可读即可 |
+| `tiles/` | 完整底图瓦片（`z=-6..0` 的 `{z}/{x}/{y}.jpg`） | **容器要写**（缺瓦片时自动下载补全）：`chown -R 1000:1000 tiles` |
+| `data-json/` | `map-data.json`、`navi-coordinate-calibration.json`、`region-positions.json` | **容器要写**（缺文件时自动下载补全并保留）：`chown -R 1000:1000 data-json` |
+
+三个目录一次性给对属主，之后都不用再管：
+
+```bash
+cd /www/server/panel/data/compose/nte-geoguess
+sudo chown -R 1000:1000 data tiles data-json
+```
 
 > 如果你更习惯把数据放在 `/www/wwwroot/nte-geoguess/` 下（不和宝塔自己的数据区混在一起），
 > 把上面三行的相对路径换成绝对路径即可，例如
@@ -142,14 +149,14 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 
 | 检查项 | 缺失时的行为 | 相关变量 |
 | --- | --- | --- |
-| 底图瓦片（`$TILES_DIR/0`） | 从 `codeload.github.com/<MAPSOURCE_REPO>` 下载并解压到 `$TILES_DIR` | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
-| 题库快照 / 坐标标定 / 区域落点 | 从 `raw.githubusercontent.com/<GIT_REPO>/<GIT_BRANCH>/…` 下载到 `$DATA_JSON_CACHE_DIR`，并把对应环境变量指过去；下载不到则回退到镜像内置的那份 | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH`、`DATA_JSON_CACHE_DIR` |
+| 底图瓦片（`$TILES_DIR/0`） | **先探 `$TILES_DIR` 可不可写**：可写才从 `codeload.github.com/<MAPSOURCE_REPO>` 下载解压；不可写直接退出（不会白下载） | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
+| 题库快照 / 坐标标定 / 区域落点 | 缺哪个补哪个：优先写回该文件所在目录（挂载进来即可持久化），目录不可写才退到 `$DATA_JSON_CACHE_DIR`，再不行回退镜像内置副本 | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH`、`DATA_JSON_CACHE_DIR` |
 
 要点：
 
 - 已经放好文件的挂载目录**优先级最高**，自检不会覆盖你的数据。
-- 自动下载需要**写入权限**：瓦片目录必须是可写挂载（`./tiles:/srv/tiles`，不要 `:ro`）；
-  写不进去且 `REQUIRE_TILES=1` 时容器会带着明确原因退出，而不是起在半残状态。
+- 自动下载需要**写入权限**：`data/`、`tiles/`、`data-json/` 都按可写准备（`chown -R 1000:1000`，且**不要加 `:ro`**）。
+  目录不可写时脚本会**先探测、直接退出并说明原因**，不会反复下载同一个 30MB 包。
 - 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH` 设成 `0`，
   自己把 `tiles/`、`data-json/` 准备好即可。
 - `DATA_JSON_CACHE_DIR` 默认在容器内的 `/tmp`（随容器生命周期）；想持久化就挂一个卷到它。
