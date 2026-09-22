@@ -261,6 +261,9 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
      `packages/shared/data/region-reference.json`（来自 MaaNTE-Map），推断规则在
      `packages/shared/src/regionInference.js` —— 后台出题时的自动归类用的是同一份实现。
      加 `--cv` 会打印参照点留一法自检准确率；执行时会备份、写盘并同步数据库。
+   - `scripts/classify-regions.py`：同一件事的 **Python 存档版**（线上那次归类就是它跑的），
+     读同一份参照点、同样的参数，产物与 mjs 版逐字节一致。规则只有 `regionInference.js` 一处，
+     这个文件留作留痕/对照，别只改它。
    - `npm run remove:imageless`：删除所有无截图点位（出不了题的地图标记）。
    除 `remove:imageless` 外都会先备份到 `data/backups/`；`remove:imageless` 按使用者要求
    不做自动备份，但会把删掉的点位完整写进 `data/removed-imageless-*.json` 以便恢复。
