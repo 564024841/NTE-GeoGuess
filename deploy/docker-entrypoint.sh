@@ -1,14 +1,17 @@
 #!/bin/sh
-# 容器入口：启动前自检「底图瓦片 + 内容数据(JSON)」。
+# 容器入口：启动前自检「底图瓦片 + 题面截图 + 内容数据(JSON)」，缺什么补什么。
 #
 # 三条原则（严格模式：宁可启动失败，也不糊过去）：
 #   1) 先探目录可写性，不可写就**立刻退出并说明原因**，绝不白下载几十 MB；
 #   2) 已有文件优先，绝不覆盖部署方放好的数据；
-#   3) 所有下载只写进挂载进来的持久目录（/srv/tiles、/srv/data-json）。
+#   3) 所有下载只写进挂载进来的持久目录（/srv/tiles、/srv/seed-images、/srv/data-json）。
 #      没有 /tmp 兜底，也没有「回退到镜像内置副本」这种静默降级。
+#
+# 镜像是「纯程序」：底图瓦片、题面截图、题库 JSON 都不在镜像里，全部靠挂载 + 首次启动下载。
 set -eu
 
 TILES_DIR="${TILES_DIR:-/srv/tiles}"
+SEED_IMAGES_DIR="${SEED_IMAGES_DIR:-/srv/seed-images/locations}"
 RUN_UID="$(id -u)"
 stage=""
 
@@ -40,6 +43,29 @@ fail_tiles() {
   fi
   if need_tiles; then
     log "REQUIRE_TILES=1：直接退出，不会用半份数据启动。"
+    exit 1
+  fi
+}
+
+# 题面截图：webp/jpg/png 都算，只要目录里有一张就认为部署方已经放好了
+count_images() {
+  find "$SEED_IMAGES_DIR" \( -name '*.webp' -o -name '*.jpg' -o -name '*.png' \) 2>/dev/null | wc -l | tr -d ' '
+}
+
+need_images() { [ "${REQUIRE_SEED_IMAGES:-1}" = "1" ]; }
+
+# 收尾：REQUIRE_SEED_IMAGES=1（默认）就退出；=0 时只告警（所有题目会显示破图）。
+fail_images() {
+  if [ "${1:-unwritable}" = "unwritable" ]; then
+    log "原因：容器以 uid ${RUN_UID} 运行，而 $SEED_IMAGES_DIR 不可写（宿主属主不是 ${RUN_UID}，或挂载带了 :ro）。"
+    log "处理：把宿主目录属主改成 ${RUN_UID}:${RUN_UID}（例如 chown -R 1000:1000 <目录>），或去掉只读挂载。"
+  else
+    log "处理：把截图手工放进 $SEED_IMAGES_DIR（每个点位一个子目录，里面是 webp/jpg），"
+    log "      或把 SEED_IMAGES_ARCHIVE_URL 指向你自己的截图包（tar.gz，里面是 locations/*.webp），"
+    log "      或设 REQUIRE_SEED_IMAGES=0（题目会全部显示破图）。"
+  fi
+  if need_images; then
+    log "REQUIRE_SEED_IMAGES=$REQUIRE_SEED_IMAGES：直接退出，不会带着空题面启动。"
     exit 1
   fi
 }
@@ -98,7 +124,62 @@ if [ -n "${stage:-}" ]; then
   stage=""
 fi
 
-# ---------- 2. 内容数据 JSON（题库快照 / 坐标标定 / 区域落点）----------
+# ---------- 2. 题面截图（每个点位一个子目录）----------
+# 镜像里不带截图：第一次部署时到这里下载一份，落在挂载目录里，之后一直复用。
+rm -rf "$SEED_IMAGES_DIR"/.bootstrap-tmp.* 2>/dev/null || true
+rm -f "$SEED_IMAGES_DIR"/.write-test.* 2>/dev/null || true
+
+if [ "$(count_images)" -gt 0 ]; then
+  log "题面截图就绪：$SEED_IMAGES_DIR（$(count_images) 张）"
+elif [ "${SEED_IMAGES_AUTO_FETCH:-1}" != "1" ]; then
+  log "题面截图缺失（$SEED_IMAGES_DIR），且 SEED_IMAGES_AUTO_FETCH=0，跳过自动下载"
+  fail_images unwritable
+elif ! writable "$SEED_IMAGES_DIR"; then
+  log "题面截图缺失（$SEED_IMAGES_DIR），且该目录不可写。"
+  fail_images unwritable
+else
+  # 默认从上游 MaaNTE-Map 的仓库包取；换成你自己的截图包（tar.gz）也可以，解出来的
+  # locations/ 目录会被整体拷进挂载目录。默认值按「上游的 public/images/locations」匹配。
+  url="${SEED_IMAGES_ARCHIVE_URL:-https://codeload.github.com/Maa-NTE/MaaNTE-Map/tar.gz/refs/heads/main}"
+  log "题面截图缺失（$SEED_IMAGES_DIR），从 $url 下载…"
+  stage="$SEED_IMAGES_DIR/.bootstrap-tmp.$$"
+  mkdir -p "$stage"
+  trap 'if [ -n "${stage:-}" ]; then rm -rf "$stage"; fi' EXIT HUP INT TERM
+
+  archive="$stage/images.tar.gz"
+  ok=0
+  if curl -fsSL "$url" -o "$archive" \
+    && [ -s "$archive" ] \
+    && tar xzf "$archive" -C "$stage"; then
+    ok=1
+  fi
+
+  if [ "$ok" = "1" ]; then
+    # 先按上游布局找 …/images/locations，找不到再退一步找任意 locations 目录（自备包常见布局）
+    src="$(find "$stage" -type d -path '*/images/locations' | head -n 1)"
+    [ -n "$src" ] || src="$(find "$stage" -maxdepth 3 -type d -name locations | head -n 1)"
+    if [ -n "$src" ] && cp -a "$src/." "$SEED_IMAGES_DIR/"; then
+      rm -rf "$stage"
+      stage=""
+      log "题面截图就绪：$SEED_IMAGES_DIR（$(count_images) 张）"
+    else
+      log "错误：下载解开后没找到 locations/ 目录，或复制到 $SEED_IMAGES_DIR 失败。"
+      log "      检查 SEED_IMAGES_ARCHIVE_URL 指向的包结构。"
+      fail_images download
+    fi
+  else
+    log "错误：题面截图下载或解压失败（codeload.github.com 连不上？URL 写错？）"
+    fail_images download
+  fi
+fi
+
+# 显式清理暂存目录（REQUIRE_SEED_IMAGES=0 且失败时会走到这里）
+if [ -n "${stage:-}" ]; then
+  rm -rf "$stage"
+  stage=""
+fi
+
+# ---------- 3. 内容数据 JSON（题库快照 / 坐标标定 / 区域落点）----------
 repo_git="${GIT_REPO:-564024841/NTE-GeoGuess}"
 repo_branch="${GIT_BRANCH:-main}"
 

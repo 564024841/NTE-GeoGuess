@@ -4,8 +4,7 @@
 //   · geometry —— 游戏坐标 ⇄ 底图像素 ⇄ Leaflet 坐标的换算（地图点选答案要用）
 //   · index    —— 题库索引（分类分组、九宫格区域、题量统计）
 //
-// 注意 map-data.json 有 700KB，前端一律不打包快照（@nte-geoguess/shared/seed 只给服务端用），
-// 所有数据都从接口取。
+// 注意题库快照有几百 KB，前端一律不打包（服务端从挂载的数据目录读），所有数据都从接口取。
 import { ref, shallowRef, triggerRef } from 'vue'
 import { buildPuzzleIndex, createGeometry } from '@nte-geoguess/shared'
 import { api, describeApiError } from '../api'

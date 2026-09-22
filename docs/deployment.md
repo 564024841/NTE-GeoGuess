@@ -1,7 +1,11 @@
 # 部署指南
 
 目标形态：**一个容器**同时提供游戏站（`/`）、后台站（`/admin/`）、API 与素材，
-外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片**不在镜像里**，从宿主目录挂载。
+外层用 nginx（宝塔即可）做域名 + HTTPS 反代。
+
+**镜像是「纯程序」**：底图瓦片、题面截图、题库 JSON 都不打进去，全部从宿主目录挂载；
+目录空的时候容器启动会自己下载一份（下完就留在宿主目录里，见「启动自检与自动补全」）。
+这样镜像只管代码，换数据不用重建镜像。
 
 ```
 浏览器 ──▶ nginx（域名 + HTTPS，站点内 proxy_cache off）
@@ -10,7 +14,9 @@
                                        ├─ /admin/         后台站（ADMIN_STATIC_DIR）
                                        ├─ /api /images /icons
                                        └─ /mapsource-tiles ──▶ /srv/tiles（宿主目录挂载）
-                                    数据：/data（宿主目录挂载：SQLite + 上传截图）
+                                    题面截图：/srv/seed-images/locations（宿主目录挂载）
+                                    内容数据：/srv/data-json（题库快照 / 标定 / 区域落点）
+                                    运行数据：/data（SQLite + 后台上传的截图）
 ```
 
 镜像由 GitHub Actions 在 push 到 `main`（或打 `v*` 标签）时构建并发布：
@@ -33,8 +39,10 @@ ghcr.io/564024841/nte-geoguess:latest
 
 | 阶段 | 是否需要外网 | 说明 |
 | --- | --- | --- |
-| **部署时（一次性）** | 需要 | 从 GitHub 拉一次瓦片（约 30MB），或从内网机器拷过来 |
+| **部署时（一次性）** | 需要 | 首次启动时容器自己拉瓦片（约 30MB）与题面截图（约 14MB），或你提前拷好 |
 | **运行时（每次访问）** | **不需要** | 服务端只从 `TILES_DIR` 读磁盘上的 jpg，代码里没有任何远程回退 |
+
+不想让容器联网拉，也可以提前用脚本准备好（可选）：
 
 ```bash
 cd NTE-GeoGuess
@@ -54,7 +62,8 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 ### 瓦片：不在镜像里，从宿主目录挂载
 
 镜像**不含瓦片**（保持精简，也避免再分发没有许可证声明的游戏底图）。
-部署前先把瓦片放到宿主目录，再挂进容器 `/srv/tiles`：
+宿主目录挂进容器 `/srv/tiles`；目录可以先建成空的，首次启动时容器自己下载。
+想提前准备（比如内网机器上拉好再拷）：
 
 ```bash
 npm run tiles:fetch          # 拉到仓库同级的 MapSource/tiles（约 30MB / 3516 张）
@@ -76,7 +85,34 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 `REQUIRE_TILES=1`（compose 默认）时，宿主瓦片目录为空或不完整会让服务端**拒绝启动**，
 避免出现"服务起来了但底图全黑"。临时调试可以先设 `REQUIRE_TILES=0`。
 
-### 内容数据（题库 / 坐标标定 / 区域落点）也不走 git
+### 题面截图（题目的游戏截图）也不在镜像里
+
+镜像**不含题面截图**（476 个点位、约 14MB webp）：宿主目录挂进容器 `/srv/seed-images`，
+服务端从这里以 `/images/locations/**` 提供图片。
+
+```yaml
+    volumes:
+      - "${SEED_IMAGES_HOST_DIR:-./seed-images}:/srv/seed-images"
+    environment:
+      SEED_IMAGES_DIR: /srv/seed-images/locations
+```
+
+目录先建成空的就行：首次启动时容器会下载一份（默认从上游 `MaaNTE-Map` 的仓库包里取
+`public/images/locations`），落在宿主目录里持久化，之后不再重复下载。
+想换成自己的截图包（比如放到对象存储 / 自建 Forgejo），把 `SEED_IMAGES_ARCHIVE_URL`
+指向那个 tar.gz 直链即可——包结构可以是 `locations/*.webp`，也可以是上游那种
+`<repo>-main/public/images/locations/*.webp`。
+
+**更新题面**：直接往宿主目录里覆盖/新增 `<点位 id>/*.webp` 即可，下个请求就生效
+（截图是按路径读盘的，不用重启容器）。
+
+`REQUIRE_SEED_IMAGES=1`（compose 默认）时，截图目录为空会让容器**拒绝启动**——
+否则所有题目都会显示破图。临时调试可以设 0。
+
+### 内容数据（题库 / 坐标标定 / 区域落点）也不在镜像里
+
+仓库里的 `packages/shared/data/*.json` 只用于**本地开发与构建**（几何、区域标签、推断参照点），
+运行时的这四份数据全部从宿主目录读，由 compose 挂进容器 `/srv/data-json`：
 
 仓库里的 `packages/shared/data/*.json` 只是**最基本的骨架**，真正的数据放在宿主机上，
 由 compose 挂进容器 `/srv/data-json`，并用环境变量指路：
@@ -92,8 +128,9 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
       - "${SHARED_DATA_HOST_DIR:-./data-json}:/srv/data-json"
 ```
 
-这个目录同样要**可写**（不要 `:ro`）：文件缺失时容器启动自检会从仓库 raw 下载一份补进来，
-并一直留在宿主目录里（下次不会重复下载）。
+这个目录同样要**可写**（不要 `:ro`）：目录空的时候容器启动自检会从仓库 raw 下载一份补进来
+（先试 `raw.githubusercontent.com`，再试 `cdn.jsdelivr.net` 镜像），并一直留在宿主目录里
+（下次不会重复下载）。镜像里不再有这几份 JSON 的副本，服务端只认这里的文件。
 
 **更新这些数据**：直接覆盖宿主目录里的文件。
 题库快照（`map-data.json`）改了之后需要让它重新导入（seed 只在 `meta.seed_version` 不匹配时跑）：
@@ -130,30 +167,32 @@ env 框里只提供 compose 里 `${...}` 的取值，**不会进容器**（进�
 ```dotenv
 DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data
 TILES_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/tiles
+SEED_IMAGES_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/seed-images
 SHARED_DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data-json
 ```
 
-如果宝塔里项目名不叫 `nte-geoguess`，把三行里的目录名一起换掉；也可以用相对路径
-`./data`、`./tiles`、`./data-json`（效果一样，就是依赖"项目目录"这个前提）。
+如果宝塔里项目名不叫 `nte-geoguess`，把四行里的目录名一起换掉；也可以用相对路径
+`./data`、`./tiles`、`./seed-images`、`./data-json`（效果一样，就是依赖"项目目录"这个前提）。
 
 也就是要在项目目录里准备好：
 
 | 目录 | 内容 | 权限 |
 | --- | --- | --- |
-| `data/` | SQLite + 后台上传截图 | 容器以 uid 1000 写入：`chown -R 1000:1000 data` |
+| `data/` | SQLite + 后台上传截图（**你自己的题库在这里**，务必备份） | 容器以 uid 1000 写入：`chown -R 1000:1000 data` |
 | `tiles/` | 完整底图瓦片（`z=-6..0` 的 `{z}/{x}/{y}.jpg`） | **容器要写**（缺瓦片时自动下载补全）：`chown -R 1000:1000 tiles` |
+| `seed-images/` | 题面截图 `locations/<点位 id>/*.webp` | **容器要写**（缺截图时自动下载补全）：`chown -R 1000:1000 seed-images` |
 | `data-json/` | `map-data.json`、`navi-coordinate-calibration.json`、`region-positions.json` | **容器要写**（缺文件时自动下载补全并保留）：`chown -R 1000:1000 data-json` |
 
-三个目录一次性给对属主，之后都不用再管：
+四个目录一次性给对属主，之后都不用再管（目录可以先是空的，容器会自己下载）：
 
 ```bash
 cd /www/server/panel/data/compose/nte-geoguess
-sudo chown -R 1000:1000 data tiles data-json
+sudo chown -R 1000:1000 data tiles seed-images data-json
 ```
 
 > 如果你更习惯把数据放在 `/www/wwwroot/nte-geoguess/` 下（不和宝塔自己的数据区混在一起），
-> 把上面三个 `*_HOST_DIR` 换成那边的绝对路径即可，例如
-> `DATA_HOST_DIR=/www/wwwroot/nte-geoguess/data`（tiles、data-json 同理）。
+> 把上面四个 `*_HOST_DIR` 换成那边的绝对路径即可，例如
+> `DATA_HOST_DIR=/www/wwwroot/nte-geoguess/data`（tiles、seed-images、data-json 同理）。
 > **不要**把这些目录放到 `/www/server/panel/data` 里手工 chmod/chown ——
 > 那是宝塔自己的数据区（`600 root`），权限被改坏会连带多个服务起不来。
 
@@ -163,6 +202,7 @@ sudo chown -R 1000:1000 data tiles data-json
 | --- | --- | --- |
 | 主程序 | `git push` → Actions 出镜像 | watchtower 自动拉取，或 `docker compose pull && up -d` |
 | 底图瓦片 | 往 `tiles/` 覆盖文件 | 下个请求即生效 |
+| 题面截图 | 往 `seed-images/locations/<点位 id>/` 覆盖或新增图片 | 下个请求即生效 |
 | 坐标标定 / 区域落点 | 覆盖 `data-json/` 里的文件 | 下个请求即生效 |
 | 题库快照 | 覆盖 `data-json/map-data.json` | 加 `FORCE_SEED=1` 重启一次（或删 `data/` 里的 SQLite 重启）后导入 |
 
@@ -173,16 +213,17 @@ sudo chown -R 1000:1000 data tiles data-json
 | 检查项 | 缺失时的行为 | 相关变量 |
 | --- | --- | --- |
 | 底图瓦片（`$TILES_DIR` 里有没有 `*.jpg`） | **先探 `$TILES_DIR` 可不可写**：可写才把 `codeload.github.com/<MAPSOURCE_REPO>` 的 tar.gz 解到 `$TILES_DIR` 下的隐藏暂存目录、再复制到位；不可写或下载失败 → **直接报错退出**（不会白下载几十 MB） | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
+| 题面截图（`$SEED_IMAGES_DIR` 里有没有图片） | 同上：可写才下载 `SEED_IMAGES_ARCHIVE_URL`（默认上游 `MaaNTE-Map` 的 tar.gz）并解出 `locations/` 拷进去；不可写或下载失败 → **直接报错退出** | `SEED_IMAGES_AUTO_FETCH`（默认 `1`）、`SEED_IMAGES_ARCHIVE_URL`、`REQUIRE_SEED_IMAGES`（默认 `1`） |
 | 题库快照 / 坐标标定 / 区域落点 | 缺哪个就下载到**它所在的挂载目录**（持久化）：先试 `raw.githubusercontent.com`，再试 `cdn.jsdelivr.net` 镜像；目录不可写、两个源都失败 → **直接报错退出** | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH` |
 
 要点：
 
 - 已经放好文件的挂载目录**优先级最高**，自检不会覆盖你的数据。
-- 自动下载需要**写入权限**：`data/`、`tiles/`、`data-json/` 都按可写准备（`chown -R 1000:1000`，且**不要加 `:ro`**）。
+- 自动下载需要**写入权限**：`data/`、`tiles/`、`seed-images/`、`data-json/` 都按可写准备（`chown -R 1000:1000`，且**不要加 `:ro`**）。
   目录不可写时脚本会**先探测、直接退出并说明原因**，不会反复下载同一个 30MB 包。
-- 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH` 设成 `0`，
-  自己把 `tiles/`、`data-json/` 准备好即可；此时文件缺失会**直接报错退出**，不会静默降级。
-- 所有下载都只写进挂载目录（`/srv/tiles`、`/srv/data-json`），**不会回退到 `/tmp`、也不会回退到
+- 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `SEED_IMAGES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`
+  设成 `0`，自己把三个目录准备好即可；此时文件缺失会**直接报错退出**，不会静默降级。
+- 所有下载都只写进挂载目录（`/srv/tiles`、`/srv/seed-images`、`/srv/data-json`），**不会回退到 `/tmp`、也不会回退到
   镜像里那份骨架** —— 宁可启动失败并打印原因，也不要起一个数据不对的服务。
 - 已经有文件时自检只打印"就绪"，不会重新下载。上次被强杀留下的隐藏暂存目录，下次启动会先清掉。
 
@@ -219,11 +260,14 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f --tai
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | 无（必填） | 后台登录密码；留空则后台接口禁用 |
 | `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 只监听本机交给 nginx 反代；想直接暴露就设 `0.0.0.0:8080` |
-| `DATA_HOST_DIR` | `./data` | SQLite + 上传截图，务必持久化并备份 |
+| `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图（你自己的题库），务必持久化并备份 |
 | `TILES_HOST_DIR` | `./tiles` | 底图瓦片目录（镜像不含瓦片，必须挂载，且容器要能写） |
+| `SEED_IMAGES_HOST_DIR` | `./seed-images` | 题面截图目录（镜像不含截图，同样要能写） |
 | `SHARED_DATA_HOST_DIR` | `./data-json` | 题库快照 / 坐标标定 / 区域落点所在目录，同样要能写 |
 | `COOKIE_SECURE` | `true` | 走 HTTPS 保持 `true`；纯 HTTP 调试才设 `false` |
 | `REQUIRE_TILES` | `1` | 瓦片缺失时拒绝启动；设 `0` 只告警（底图会全黑） |
+| `REQUIRE_SEED_IMAGES` | `1` | 题面截图缺失时拒绝启动；设 `0` 只告警（题目会显示破图） |
+| `SEED_IMAGES_ARCHIVE_URL` | 空（用上游地址） | 换自己的截图包时填 tar.gz 直链 |
 
 首次启动会自动把内置题库导入 SQLite，日志里出现
 `[seed] 已导入内置数据：分类 8、点位 476`。
@@ -314,8 +358,10 @@ ADMIN_PASSWORD=...
 | `REQUIRE_TILES` | `false` | `1` = 瓦片缺失/不完整时拒绝启动（compose 默认 `1`） |
 | `TILE_URL_TEMPLATE` | `/mapsource-tiles/{z}/{x}/{y}.jpg` | 下发给前端的瓦片 URL |
 | `TILE_REDIRECT_BASE` | 空 | 填了则瓦片 302 到该地址（对象存储/CDN）；留空即完全本地 |
-| `SEED_DATA_FILE` / `CALIBRATION_FILE` / `REGION_POSITIONS_FILE` | 镜像内骨架 JSON | 题库快照 / 坐标标定 / 区域落点；生产用挂载覆盖（compose 默认指向 `/srv/data-json/*`） |
-| `SEED_IMAGES_DIR` / `ICONS_DIR` | 仓库内目录 | 内置截图与分类图标 |
+| `SEED_DATA_FILE` / `CALIBRATION_FILE` / `REGION_POSITIONS_FILE` | `<仓库>/packages/shared/data/*` | 题库快照 / 坐标标定 / 区域落点；镜像里没有副本，compose 指向 `/srv/data-json/*` |
+| `SEED_IMAGES_DIR` | `<仓库>/apps/game/public/images/locations` | 题面截图目录；镜像里没有截图，compose 指向 `/srv/seed-images/locations` |
+| `SEED_IMAGES_AUTO_FETCH` / `SEED_IMAGES_ARCHIVE_URL` / `REQUIRE_SEED_IMAGES` | `1` / 上游地址 / `1` | 缺截图时自动下载的开关、下载源、缺失时是否拒绝启动 |
+| `ICONS_DIR` | `<仓库>/apps/game/public/icons` | 分类图标（这个仍在镜像里，几百 KB） |
 | `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
 | `SESSION_TTL_HOURS` | `12` | 后台会话有效期 |
 | `CORS_ORIGINS` | 空 | 后台站与 API 不同源时填，逗号分隔（带 Cookie 的跨域不允许 `*`） |
@@ -363,6 +409,7 @@ ADMIN_PASSWORD=...
 | 页面空白 / 提示「路径不存在」 | ① 首页 HTML 被 nginx 缓存 → 站点加 `proxy_cache off;`；② 前端没构建或 `STATIC_DIR` 不对 |
 | 页面能开但没有图、统计是 0 | 题库没导入：看日志有没有 `[seed] 已导入内置数据`；数据更新后用 `FORCE_SEED=1` 重导 |
 | 底图黑 / 瓦片 404 | `TILES_HOST_DIR` 挂错；`REQUIRE_TILES=1` 时缺瓦片会直接拒绝启动 |
+| 题目全是破图 / 截图 404 | `SEED_IMAGES_HOST_DIR` 挂错或为空：容器启动时会自动下载；也可手工放 `seed-images/locations/<点位 id>/*.webp` |
 | 后台登录 503 | 没设 `ADMIN_PASSWORD` |
 | 后台登录成功但立刻 401 | HTTPS 环境没开 `COOKIE_SECURE`，或跨域没配 `CORS_ORIGINS` |
 | 容器起不来，SQLite 读写失败 | 宿主数据目录权限不对：容器内是 uid 1000，`sudo chown -R 1000:1000 <DATA_HOST_DIR>` |

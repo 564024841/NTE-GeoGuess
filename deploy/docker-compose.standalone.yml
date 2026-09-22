@@ -8,10 +8,12 @@
 # 宝塔会把项目建在 /www/server/panel/data/compose/<项目名>/，
 # 下面的相对路径就落在该项目目录里，例如 ./data → /www/server/panel/data/compose/nte-geoguess/data
 #
-# 部署前准备三个目录（相对本项目目录），容器要能写它们（缺失时自检会补全）：
-#   ./data/        SQLite + 后台上传截图；容器以 uid 1000 写入 → chown -R 1000:1000
-#   ./tiles/       完整底图瓦片，z=-6..0 的 {z}/{x}/{y}.jpg（约 30MB / 3516 张）
-#   ./data-json/   map-data.json、navi-coordinate-calibration.json、region-positions.json
+# 部署前准备四个目录（相对本项目目录），容器要能写它们（缺失时自检会补全）：
+#   ./data/         SQLite + 后台上传截图；容器以 uid 1000 写入 → chown -R 1000:1000
+#   ./tiles/        完整底图瓦片，z=-6..0 的 {z}/{x}/{y}.jpg（约 30MB / 3516 张）
+#   ./seed-images/  题面截图，…/locations/<点位 id>/*.webp（约 14MB / 476 张）
+#   ./data-json/    map-data.json、navi-coordinate-calibration.json、region-positions.json
+# 四个目录都可以先建成空的：容器启动时会自己下载（下完就留在宿主目录里，不会重复下）。
 
 services:
   app:
@@ -37,9 +39,12 @@ services:
       TILES_DIR: /srv/tiles
       REQUIRE_TILES: "1"
       SEED_IMAGES_DIR: /srv/seed-images/locations
+      SEED_IMAGES_AUTO_FETCH: "1"
+      SEED_IMAGES_ARCHIVE_URL: ""     # 留空 = 用默认的上游地址；也可填自己的 tar.gz 直链
+      REQUIRE_SEED_IMAGES: "1"
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: "/mapsource-tiles/{z}/{x}/{y}.jpg"
-      # 启动自检：缺瓦片 / 缺内容数据时自动下载补全（=0 关闭）
+      # 启动自检：缺瓦片 / 缺截图 / 缺内容数据时自动下载补全（=0 关闭）
       TILES_AUTO_FETCH: "1"
       DATA_JSON_AUTO_FETCH: "1"
       MAPSOURCE_REPO: "Maa-NTE/MapSource"
@@ -57,6 +62,7 @@ services:
     volumes:
       - ./data:/data
       - ./tiles:/srv/tiles
+      - ./seed-images:/srv/seed-images
       - ./data-json:/srv/data-json
     labels:
       # watchtower 带 --label-enable 时会自动拉新镜像重启（不带则会更新所有容器）

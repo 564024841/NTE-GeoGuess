@@ -28,6 +28,12 @@ COPY apps/game apps/game
 COPY apps/admin apps/admin
 COPY server server
 
+# 题面截图（apps/game/public/images/locations，几百张 webp）**不进镜像**：
+#   · Vite 会把 public/ 原样拷进 dist，等于镜像里塞一份 14MB 的题面；
+#   · 这些截图改由挂载目录 /srv/seed-images 提供，缺了由入口脚本下载（见 docker-entrypoint.sh）。
+# 所以构建前先把它们从构建上下文里删掉：仓库里仍然保留（本地开发要用），只是不进产物。
+RUN rm -rf apps/game/public/images
+
 # 前端构建完就不再需要 vite/vue 那套构建期依赖了：最后把 devDependencies 从 node_modules 里剔除，
 # 运行阶段直接拷这份「只剩生产依赖」的树（better-sqlite3 这时已经编译好，prune 不会重编）。
 # 必须排在 build:* 之后，并且带 --ignore-scripts，否则 npm 会去跑被删包的生命周期脚本。
@@ -59,10 +65,9 @@ ENV NODE_ENV=production \
     TILES_DIR=/srv/tiles \
     REQUIRE_TILES=0 \
     SEED_IMAGES_DIR=/srv/seed-images/locations \
-    # 内容数据：镜像里只带一份「最基本」的骨架，生产用 compose 挂载真实文件并覆盖下面三个路径
-    SEED_DATA_FILE=/app/packages/shared/data/map-data.json \
-    CALIBRATION_FILE=/app/packages/shared/data/navi-coordinate-calibration.json \
-    REGION_POSITIONS_FILE=/app/packages/shared/data/region-positions.json \
+    SEED_DATA_FILE=/srv/data-json/map-data.json \
+    CALIBRATION_FILE=/srv/data-json/navi-coordinate-calibration.json \
+    REGION_POSITIONS_FILE=/srv/data-json/region-positions.json \
     ICONS_DIR=/srv/icons
 
 WORKDIR /app
@@ -77,12 +82,15 @@ COPY --from=builder /app/package-lock.json package-lock.json
 COPY --from=builder /app/packages/shared packages/shared
 COPY --from=builder /app/server server
 
+# 内容数据（题库快照 / 标定 / 区域落点）也不进镜像：全部从挂载的 /srv/data-json 读。
+# 前端产物里已经内联了它们需要的那几个小常量（标定由接口下发，不依赖这个目录）。
+RUN rm -rf /app/packages/shared/data
+
 # 前端构建产物（由服务端同源托管）
 COPY --from=builder /app/apps/game/dist /srv/game
 COPY --from=builder /app/apps/admin/dist /srv/admin
 
-# 内置截图与图标
-COPY apps/game/public/images/locations /srv/seed-images/locations
+# 分类图标（几百 KB，属于程序自带素材，继续留在镜像里）
 COPY apps/game/public/icons /srv/icons
 
 # 可选内置瓦片（上下文存在即复制，不存在也不报错）
@@ -91,7 +99,7 @@ COPY --from=tiles /tiles /srv/tiles
 # 入口脚本：启动前自检瓦片与内容数据，缺失就自动下载补全
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /data/uploads /srv/tiles \
+RUN mkdir -p /data/uploads /srv/tiles /srv/seed-images/locations /srv/data-json \
   && chown -R node:node /data /srv \
   && chmod +x /usr/local/bin/docker-entrypoint.sh
 

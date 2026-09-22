@@ -19,7 +19,6 @@ rmSync(outdir, { recursive: true, force: true })
 const result = await build({
   entryPoints: {
     index: path.join(root, 'src/index.js'),
-    seed: path.join(root, 'src/seed.js'),
     affine: path.join(root, 'src/affine.js'),
     geometry: path.join(root, 'src/geometry.js'),
     puzzles: path.join(root, 'src/puzzles.js'),

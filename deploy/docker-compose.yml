@@ -42,13 +42,22 @@ services:
       TILE_URL_TEMPLATE: "${TILE_URL_TEMPLATE:-}"
       TILE_REDIRECT_BASE: "${TILE_REDIRECT_BASE:-}"  # 交给对象存储/CDN 时填这里
 
-      # 内容数据（题库快照 / 坐标标定 / 区域落点）：git 上只有最基本的一份，
-      # 生产直接读挂载进来的 data-json 目录 —— 覆盖宿主文件即生效，不用重建镜像。
+      # 内容数据（题库快照 / 坐标标定 / 区域落点）：镜像里不带，直接读挂载进来的
+      # data-json 目录 —— 覆盖宿主文件即生效，不用重建镜像；目录空则由入口脚本下载。
       SEED_DATA_FILE: /srv/data-json/map-data.json
       CALIBRATION_FILE: /srv/data-json/navi-coordinate-calibration.json
       REGION_POSITIONS_FILE: /srv/data-json/region-positions.json
 
-      # 启动自检：缺瓦片 / 缺内容数据时自动下载补全（没权限或下载失败 = 直接报错退出）
+      # 题面截图（每个点位一个子目录）。镜像里不带截图，从这个挂载目录读；
+      # 目录空的时候由入口脚本下载一份，落在挂载目录里（持久化，之后不再重复下）。
+      SEED_IMAGES_DIR: /srv/seed-images/locations
+      SEED_IMAGES_AUTO_FETCH: "${SEED_IMAGES_AUTO_FETCH:-1}"
+      # 留空 = 用镜像里的默认上游地址（MaaNTE-Map 的 tar.gz）；
+      # 想换成自己的截图包就填 tar.gz 直链（里面是 locations/*.webp）。
+      SEED_IMAGES_ARCHIVE_URL: "${SEED_IMAGES_ARCHIVE_URL:-}"
+      REQUIRE_SEED_IMAGES: "${REQUIRE_SEED_IMAGES:-1}"
+
+      # 启动自检：缺瓦片 / 缺截图 / 缺内容数据时自动下载补全（没权限或下载失败 = 直接报错退出）
       TILES_AUTO_FETCH: "${TILES_AUTO_FETCH:-1}"
       DATA_JSON_AUTO_FETCH: "${DATA_JSON_AUTO_FETCH:-1}"
       MAPSOURCE_REPO: "${MAPSOURCE_REPO:-Maa-NTE/MapSource}"
@@ -57,7 +66,8 @@ services:
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8787}:8080"
     volumes:
-      # 三个目录都要持久化，而且容器必须能写（缺文件时自检要补全）→ 不要加 :ro
+      # 四个目录都要持久化，而且容器必须能写（缺文件时自检要补全）→ 不要加 :ro
       - "${DATA_HOST_DIR:-./data}:/data"                    # SQLite + 后台上传截图
       - "${TILES_HOST_DIR:-./tiles}:/srv/tiles"             # 完整底图瓦片（z=-6..0 的 {z}/{x}/{y}.jpg）
       - "${SHARED_DATA_HOST_DIR:-./data-json}:/srv/data-json"  # map-data.json / 标定 / 区域落点
+      - "${SEED_IMAGES_HOST_DIR:-./seed-images}:/srv/seed-images"  # 题面截图（…/locations/<点位 id>/*.webp）

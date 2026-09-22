@@ -10,7 +10,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./seed": "./dist/seed.js",
     "./affine": "./dist/affine.js",
     "./geometry": "./dist/geometry.js",
     "./puzzles": "./dist/puzzles.js",

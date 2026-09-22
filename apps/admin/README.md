@@ -73,7 +73,7 @@ npm run preview --workspace apps/admin  # http://127.0.0.1:4175
 - **共享逻辑**：坐标换算（`createGeometry`）、题库索引与区域推断（`buildPuzzleIndex` / `regionInference`）、
   评分与格式化、图片路径与 MIME 白名单（`resolveImageUrl` / `isSupportedImageType` 等）
   全部 `import ... from '@nte-geoguess/shared'`，两端不各写一份。
-- **不打包地图快照**：`@nte-geoguess/shared/seed`（700 KB 的 `map-data.json`）只给服务端用，
+- **不打包地图快照**：题库快照既不进前端产物也不进镜像（服务端从挂载的数据目录读），
   后台的地图元信息、标定、分类、点位一律来自 `GET /api/bootstrap`。
 - **与游戏站同一套视觉**：暗色玻璃拟态、`--accent: #8adfd6`、`.glass-panel`、`.view-tabs`、
   `.steps`、`.drop-zone`、`.answer-slot` 等 class 与 `apps/game/src/styles.css` 对齐；

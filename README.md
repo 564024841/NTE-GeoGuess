@@ -84,6 +84,12 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 镜像**不含**瓦片（避免再分发无许可证声明的底图）：容器启动自检发现瓦片目录里没有 jpg 时会自动拉一份，
 下载位置就是挂载进来的宿主目录，所以数据是持久的。
 
+### 题面截图
+
+题目的游戏截图（每个点位一张，约 476 张 / 14MB）也**不在镜像里**：容器从一个宿主目录
+`seed-images/` 读，目录空的时候启动自检会自动下载一份（默认从上游 `MaaNTE-Map` 的仓库包里取），
+同样落在宿主目录里持久化。想换成自己的截图包，把 `SEED_IMAGES_ARCHIVE_URL` 指向 tar.gz 直链即可。
+
 ---
 
 ## 玩法与规则
@@ -198,7 +204,10 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 | `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图，务必持久化并备份 |
 | `ADMIN_PASSWORD` | 无 | 后台登录密码；留空则后台接口禁用 |
 
-底图瓦片**不在镜像里**（镜像保持精简、也不涉及再分发底图），必须从宿主目录挂载：
+**镜像里只有程序**：底图瓦片、题面截图、题库 JSON 都不打进去，全部从宿主目录挂载，
+目录空的时候首次启动自己下载（下完就留在宿主目录里持久化）。
+
+底图瓦片（镜像保持精简、也不涉及再分发底图）从宿主目录挂载：
 
 ```bash
 npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
@@ -208,9 +217,10 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 以后更新瓦片，**直接往这个宿主目录里覆盖文件即可**——服务端按请求读盘，上传完立即生效，
 不需要重建镜像、也不需要重启容器（想验证可以 `docker compose restart app` 看启动自检日志）。
 
-同理，**题库快照、坐标标定、区域落点**这些内容数据也不在 git 上维护：
-仓库里的 `packages/shared/data/*.json` 只是骨架，生产把它们放到宿主目录里挂进容器
-`/srv/data-json`（compose 默认已配好 `SHARED_DATA_HOST_DIR`），改文件即生效
+同理，**题面截图**挂在 `/srv/seed-images`（compose 默认已配好 `SEED_IMAGES_HOST_DIR`），
+**题库快照、坐标标定、区域落点**挂在 `/srv/data-json`（`SHARED_DATA_HOST_DIR`），
+后台上传的自建题与 SQLite 在 `/data`（`DATA_HOST_DIR`）。
+四个目录都空着也能起来——启动自检会把缺的下载齐；改文件下个请求即生效
 （其中题库快照需要 `FORCE_SEED=1` 重启一次让它重新导入）。
 
 想交给宝塔的「Docker → Compose 项目」管理时，它的两个输入框分别粘
@@ -220,8 +230,8 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 [`deploy/docker-compose.standalone.yml`](deploy/docker-compose.standalone.yml)（变量全部内联）。
 细节见 [`docs/deployment.md`](docs/deployment.md) 的「宝塔面板：用 Compose 项目部署」。
 
-容器启动时会先自检：**瓦片目录里没有 jpg、或内容数据 JSON 不存在，就自动下载补全**
-（`TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭成"缺了就报错"）。
+容器启动时会先自检：**瓦片目录里没有 jpg、题面截图目录里没有图、或内容数据 JSON 不存在，就自动下载补全**
+（`TILES_AUTO_FETCH` / `SEED_IMAGES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭成"缺了就报错"）。
 补全只写进挂载的宿主目录；**目录不可写或下载失败 = 直接退出并说明原因**，
 没有"退到 `/tmp`"或"用镜像里那份旧骨架"的静默兜底。
 
