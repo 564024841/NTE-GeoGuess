@@ -28,11 +28,15 @@ COPY apps/game apps/game
 COPY apps/admin apps/admin
 COPY server server
 
+# 前端构建完就不再需要 vite/vue 那套构建期依赖了：最后把 devDependencies 从 node_modules 里剔除，
+# 运行阶段直接拷这份「只剩生产依赖」的树（better-sqlite3 这时已经编译好，prune 不会重编）。
+# 必须排在 build:* 之后，并且带 --ignore-scripts，否则 npm 会去跑被删包的生命周期脚本。
 RUN npm ci --no-audit --no-fund --ignore-scripts --registry="$NPM_REGISTRY" \
   && npm rebuild better-sqlite3 --build-from-source --registry="$NPM_REGISTRY" \
   && npm run build:shared \
   && npm run build:game \
-  && npm run build:admin
+  && npm run build:admin \
+  && npm prune --omit=dev --ignore-scripts
 
 # ---------- 可选瓦片收集阶段 ----------
 # 如果构建上下文里有 MapSource/tiles，就复制进 /tiles；没有时保持空目录。
