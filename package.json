@@ -1,0 +1,43 @@
+{
+  "name": "nte-geoguess-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NTE 图寻：看游戏内截图猜位置的小游戏（游戏站 + 后台站 + 服务端）",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:game",
+    "dev:game": "npm run dev --workspace @nte-geoguess/game",
+    "dev:admin": "npm run dev --workspace @nte-geoguess/admin",
+    "dev:server": "npm run dev --workspace nte-geoguess-server",
+    "build": "npm run build --workspace @nte-geoguess/shared && npm run build --workspace @nte-geoguess/game && npm run build --workspace @nte-geoguess/admin",
+    "build:game": "npm run build --workspace @nte-geoguess/game",
+    "build:admin": "npm run build --workspace @nte-geoguess/admin",
+    "build:shared": "npm run build --workspace @nte-geoguess/shared",
+    "start": "npm run start --workspace nte-geoguess-server",
+    "qa": "npm run qa:geometry && npm run qa:server",
+    "qa:all": "npm run qa:geometry && npm run qa:server && npm run qa:game && npm run qa:admin",
+    "qa:geometry": "node scripts/qa-geometry.mjs",
+    "qa:data": "node scripts/qa-geometry.mjs",
+    "qa:server": "node scripts/qa-server.mjs",
+    "qa:game": "node scripts/verify-game.mjs",
+    "qa:admin": "node scripts/verify-admin.mjs",
+    "migrate:regions": "node scripts/migrate-regions.mjs",
+    "add:region-twilight": "node scripts/add-region-twilight.mjs",
+    "remove:imageless": "node scripts/remove-imageless.mjs",
+    "tiles:verify": "node scripts/tiles.mjs verify",
+    "tiles:fetch": "node scripts/tiles.mjs fetch",
+    "tiles:mirror": "node scripts/tiles.mjs mirror"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5",
+    "playwright-core": "^1.60.0"
+  }
+}

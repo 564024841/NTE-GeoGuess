@@ -1,0 +1,22 @@
+{
+  "name": "@nte-geoguess/admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "图寻题库后台（登录、出题、题库与分类管理）",
+  "scripts": {
+    "dev": "vite --configLoader runner --host 127.0.0.1 --port 5175",
+    "build": "vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner --host 127.0.0.1 --port 4175"
+  },
+  "dependencies": {
+    "@nte-geoguess/shared": "*",
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7"
+  }
+}

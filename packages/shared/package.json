@@ -1,0 +1,37 @@
+{
+  "name": "@nte-geoguess/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "游戏前端、后台前端与后端共用的地图几何、题库与评分逻辑",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./seed": "./dist/seed.js",
+    "./affine": "./dist/affine.js",
+    "./geometry": "./dist/geometry.js",
+    "./puzzles": "./dist/puzzles.js",
+    "./scoring": "./dist/scoring.js",
+    "./constants": "./dist/constants.js",
+    "./format": "./dist/format.js",
+    "./regionPositions": "./dist/regionPositions.js",
+    "./images": "./dist/images.js",
+    "./imageRegistry": "./dist/imageRegistry.js",
+    "./data/map-data.json": "./data/map-data.json",
+    "./data/calibration.json": "./data/navi-coordinate-calibration.json"
+  },
+  "files": [
+    "dist",
+    "data",
+    "src"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  }
+}

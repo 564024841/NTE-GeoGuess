@@ -1,0 +1,23 @@
+{
+  "name": "nte-geoguess-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "图寻服务端：题库 API、鉴权、截图与底图瓦片托管",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^8.0.4",
+    "@fastify/helmet": "^13.0.1",
+    "@nte-geoguess/shared": "*",
+    "better-sqlite3": "^11.7.0",
+    "fastify": "^5.2.0"
+  }
+}

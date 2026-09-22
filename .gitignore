@@ -1,0 +1,15 @@
+# 构建产物与运行时数据
+node_modules/
+dist/
+output/
+*.log
+
+# 服务端运行数据（SQLite 与后台上传的截图）
+data/
+server/data/
+
+# 部署时从模板复制出来的环境文件（含密码，不要提交）
+deploy/.env
+
+# 底图瓦片仓库（单独克隆，不进本仓库）
+MapSource/

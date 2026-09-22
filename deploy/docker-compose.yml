@@ -1,0 +1,78 @@
+# 图寻：服务端 + nginx（托管两个前端并反代 API）。
+#
+# 用法：
+#   cp deploy/.env.example deploy/.env      # 改掉 ADMIN_PASSWORD
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#
+# 端口：
+#   8080  游戏站（公开）
+#   8081  后台站（只应暴露给内网 / VPN；nginx.conf 里已按内网网段限制）
+#
+# 底图瓦片：默认由服务端从 /srv/tiles 读取，把宿主上的
+# Maa-NTE/MapSource/tiles 挂进来即可（见 TILES_HOST_DIR）。
+
+# 显式指定项目名：否则 compose 会用所在目录名（deploy）作为前缀，
+# 同一台机器上跑多个 compose 项目时容易撞名。
+name: nte-geoguess
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: nte-geoguess-server:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      HOST: 0.0.0.0
+      DATA_DIR: /data
+      # 必填：后台登录密码。留空会禁用后台接口（登录返回 503）。
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 deploy/.env 中设置 ADMIN_PASSWORD}
+      # 走 HTTPS 时设为 true，会话 Cookie 才会带 Secure
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      # 后台站与 API 不同源时才需要填（同源部署留空）
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # 容器内路径，由下面的 volumes 挂入或镜像内自带
+      TILES_DIR: /srv/tiles
+      # 生产建议打开：瓦片缺失/不完整时直接拒绝启动，
+      # 而不是「服务起来了但底图全黑」这种难排查的状态
+      REQUIRE_TILES: ${REQUIRE_TILES:-1}
+      SEED_IMAGES_DIR: /srv/seed-images/locations
+      ICONS_DIR: /srv/icons
+      TILE_URL_TEMPLATE: ${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}
+      # 需要把瓦片交给 CDN 时填这里，服务端会 302 过去
+      TILE_REDIRECT_BASE: ${TILE_REDIRECT_BASE:-}
+    volumes:
+      # SQLite 与后台上传的截图：必须持久化
+      - nte-geoguess-data:/data
+      # 底图瓦片（宿主上的 Maa-NTE/MapSource/tiles）
+      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
+    networks:
+      - nte-geoguess
+    # 一般不直接暴露；需要本机 curl 调试时打开
+    # ports:
+    #   - "127.0.0.1:8787:8787"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: nte-geoguess-web:latest
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "${GAME_PORT:-8080}:8080"
+      - "${ADMIN_PORT:-8081}:8081"
+    networks:
+      - nte-geoguess
+
+networks:
+  nte-geoguess:
+    driver: bridge
+
+volumes:
+  nte-geoguess-data:
