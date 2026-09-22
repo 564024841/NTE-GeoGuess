@@ -1,0 +1,30 @@
+{
+  "map": {
+    "width": 26112,
+    "height": 26112,
+    "tileSize": 512,
+    "tileUrl": "/mapsource-tiles/{z}/{x}/{y}.jpg",
+    "mapLocatorSourceWidth": 13056,
+    "mapLocatorSourceHeight": 13056,
+    "coordinateSystem": "game-affine-v1"
+  },
+  "calibration": {
+    "version": 1,
+    "coordinateFrame": "map-2026-08",
+    "sourceWidth": 13056,
+    "sourceHeight": 13056,
+    "points": [
+      { "raw": [0, 0, 0], "map": [0, 0] },
+      { "raw": [100000, 0, 0], "map": [10000, 0] },
+      { "raw": [0, 100000, 0], "map": [0, 10000] }
+    ]
+  },
+  "categories": [],
+  "locations": [],
+  "stats": {
+    "locations": 0,
+    "puzzles": 0,
+    "categories": 0,
+    "questionBank": 0
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "regions": [
+    { "id": "region-hyuga", "label": "向阳岛", "x": 13056, "y": 13056 },
+    { "id": "region-new-holland", "label": "新赫兰德区", "x": 13056, "y": 13056 },
+    { "id": "region-miminoura", "label": "未闻浦", "x": 13056, "y": 13056 },
+    { "id": "region-hashima", "label": "桥间地", "x": 13056, "y": 13056 },
+    { "id": "region-miguel", "label": "米格尔区", "x": 13056, "y": 13056 },
+    { "id": "region-ekuumachi", "label": "绘空町", "x": 13056, "y": 13056 },
+    { "id": "region-twilight", "label": "薄暮区", "x": 13056, "y": 13056 }
+  ]
+}

@@ -8,6 +8,10 @@ output/
 data/
 server/data/
 
+# 允许提交静态数据文件（shared 包需这些 JSON 才能编译与启动）
+!packages/shared/data/
+!packages/shared/data/*.json
+
 # 部署时从模板复制出来的环境文件（含密码，不要提交）
 deploy/.env
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "coordinateFrame": "map-2026-08",
+  "sourceWidth": 13056,
+  "sourceHeight": 13056,
+  "points": [
+    { "raw": [0, 0, 0], "map": [0, 0] },
+    { "raw": [100000, 0, 0], "map": [10000, 0] },
+    { "raw": [0, 100000, 0], "map": [0, 10000] }
+  ]
+}
