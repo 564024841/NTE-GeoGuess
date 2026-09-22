@@ -89,7 +89,7 @@ apps/admin/
 │   ├── App.vue             登录态 + 启动数据的 gate：登录页 / 加载页 / 错误页 / 工作台
 │   ├── api.js              API 客户端（credentials、统一错误、超时、dataUrl 读取）
 │   ├── styles.css          暗色主题（与游戏站同源，另加后台专用样式）
-│   ├── utils/              leaflet 入口、publicAssetUrl、九宫格区域解析
+│   ├── utils/              leaflet 入口、区域解析
 │   ├── composables/        useAuth / useBootstrap / useMap / useQuestionEditor /
 │   │                       useQuestionList / useCategories / useNotices / useConfirm
 │   └── components/         LoginView / MapWorkspace / QuestionEditorPanel /

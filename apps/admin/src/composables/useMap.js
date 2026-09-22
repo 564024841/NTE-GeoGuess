@@ -8,9 +8,9 @@
 //      和游戏站一样保持「只有底图 + 当前正在编辑的那个答案点」。
 //   2. 点位数据由调用方通过 pinPoint 注入（当前草稿/编辑中的答案），点击回调用 onMapClick。
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from '@nte-geoguess/shared'
+import { INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM, resolveImageUrl } from '@nte-geoguess/shared'
 import L from '../utils/leaflet'
-import { publicAssetUrl } from '../utils/assets'
+import { ASSET_BASE } from '../api'
 
 // geometry: createGeometry(...) 的返回值（调用方保证已就绪，本模块不做空判断）
 // pinPoint: Ref<{x, y} | null>  当前答案位置（游戏坐标）
@@ -79,7 +79,9 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
       attributionControl: false,
     })
 
-    L.tileLayer(publicAssetUrl(mapConfig.tileUrl), {
+    // 瓦片路径来自接口（默认 /mapsource-tiles/{z}/{x}/{y}.jpg），是服务端根路径下的资源，
+    // 交给 resolveImageUrl 处理：绝对 URL 原样返回，站内路径补 ASSET_BASE（同源时就是原样）。
+    L.tileLayer(resolveImageUrl(mapConfig.tileUrl, ASSET_BASE), {
       bounds,
       minZoom: MIN_ZOOM,
       // 瓦片仓库最高只到 z=0，再往上由 Leaflet 放大复用
