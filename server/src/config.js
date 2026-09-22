@@ -55,6 +55,11 @@ export const config = {
     'CALIBRATION_FILE',
     path.join(repoRoot, 'packages/shared/data/navi-coordinate-calibration.json'),
   )),
+  // 区域名标签的落点（内容数据，支持用挂载文件覆盖，改位置不必重建前端）
+  regionPositionsFile: path.resolve(env(
+    'REGION_POSITIONS_FILE',
+    path.join(repoRoot, 'packages/shared/data/region-positions.json'),
+  )),
   // 内置点位截图目录（public/images/locations）
   seedImagesDir: path.resolve(env(
     'SEED_IMAGES_DIR',

@@ -2,7 +2,7 @@
 // 再交给 shared 的 createGeometry / buildPuzzleIndex 构造后台需要的两样东西：
 //
 //   · geometry —— 游戏坐标 ⇄ 底图像素 ⇄ Leaflet 坐标的换算（地图点选答案要用）
-//   · index    —— 题库索引（分类分组、九宫格区域、题量统计）
+//   · index    —— 题库索引（分类分组、题量统计）
 //
 // 注意 map-data.json 有 700KB，前端一律不打包快照（@nte-geoguess/shared/seed 只给服务端用），
 // 所有数据都从接口取。
@@ -16,6 +16,8 @@ export function useBootstrap() {
   const mapConfig = shallowRef(null)
   const stats = shallowRef(null)
   const categories = shallowRef([])
+  // 区域名标签的落点（服务端下发；读不到时前端回退到内联的那份，见 MapWorkspace）
+  const regionPositions = shallowRef([])
   // geometry / index 里是上千个点位对象，用 shallowRef 避免 Vue 逐层做响应式代理
   const geometry = shallowRef(null)
   const index = shallowRef(null)
@@ -36,6 +38,7 @@ export function useBootstrap() {
       mapConfig.value = payload.map
       stats.value = payload.stats || null
       categories.value = payload.categories || []
+      regionPositions.value = Array.isArray(payload.regionPositions) ? payload.regionPositions : []
       geometry.value = nextGeometry
       index.value = nextIndex
       status.value = 'ready'
@@ -55,5 +58,16 @@ export function useBootstrap() {
     triggerRef(categories)
   }
 
-  return { status, error, mapConfig, stats, categories, geometry, index, load, addCategory }
+  return {
+    status,
+    error,
+    mapConfig,
+    stats,
+    categories,
+    regionPositions,
+    geometry,
+    index,
+    load,
+    addCategory,
+  }
 }

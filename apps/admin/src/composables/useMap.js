@@ -6,6 +6,7 @@
 // 两处刻意不同：
 //   1. 地图上不画任何题库点位——后台地图一旦显示点位就等于把答案提前摆在眼前，
 //      和游戏站一样保持「只有底图 + 当前正在编辑的那个答案点」。
+//      区域名标记是例外：它是区域级的参照，不泄露任何具体点位。
 //   2. 点位数据由调用方通过 pinPoint 注入（当前草稿/编辑中的答案），点击回调用 onMapClick。
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from '@nte-geoguess/shared'
@@ -14,8 +15,10 @@ import { publicAssetUrl } from '../utils/assets'
 
 // geometry: createGeometry(...) 的返回值（调用方保证已就绪，本模块不做空判断）
 // pinPoint: Ref<{x, y} | null>  当前答案位置（游戏坐标）
+// regionPoints: Ref<Array<{ label, pixelX, pixelY }>>  区域名标记的落点（标定像素）
+// showRegionLabels: Ref<boolean>  区域名标记开关
 // onMapClick: (gamePoint) => void
-export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
+export function useMap({ geometry, mapConfig, pinPoint, regionPoints, showRegionLabels, onMapClick }) {
   const mapElement = ref(null)
   const map = shallowRef(null)
   const mapReady = ref(false)
@@ -26,6 +29,44 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
   const bounds = L.latLngBounds([-geometry.mapHeight, 0], [0, geometry.mapWidth])
 
   let pinLayer = null
+  let regionLabelLayer = null
+
+  // 区域名从这一级开始显示：初始 -3 是整图缩略，7 个标签会糊在一起
+  const REGION_LABEL_MIN_ZOOM = -2
+
+  function renderRegionLabels() {
+    if (!regionLabelLayer) return
+    regionLabelLayer.clearLayers()
+    for (const region of regionPoints?.value || []) {
+      const latlng = geometry.mapLocatorToMapLatLng({
+        pixelX: region.pixelX,
+        pixelY: region.pixelY,
+      })
+      const icon = L.divIcon({
+        className: 'region-label-shell',
+        html: `<span class="region-label">${region.label}</span>`,
+        iconSize: [120, 28],
+        iconAnchor: [60, 14],
+      })
+      regionLabelLayer.addLayer(L.marker([latlng.lat, latlng.lng], {
+        icon,
+        // 标签不可交互，免得挡住点击落点
+        interactive: false,
+        keyboard: false,
+      }))
+    }
+  }
+
+  function updateRegionLabels() {
+    if (!regionLabelLayer || !map.value) return
+    const instance = map.value
+    const shouldShow = showRegionLabels?.value !== false && instance.getZoom() >= REGION_LABEL_MIN_ZOOM
+    if (shouldShow) {
+      if (!instance.hasLayer(regionLabelLayer)) regionLabelLayer.addTo(instance)
+    } else if (instance.hasLayer(regionLabelLayer)) {
+      regionLabelLayer.remove()
+    }
+  }
 
   // 图钉以「点位」为几何中心：锚点取图标正中，圆点中心才是真实坐标，
   // 否则后台看到的落点和入库的坐标会差半个图标。
@@ -93,6 +134,9 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
     L.control.zoom({ position: 'bottomright' }).addTo(instance)
 
     pinLayer = L.layerGroup().addTo(instance)
+    // 区域名单独一层：它不是点位标记，开关与缩放门槛都不一样
+    regionLabelLayer = L.layerGroup()
+    renderRegionLabels()
 
     instance.on('mousemove', ({ latlng }) => {
       // 两套坐标都给：像素用于复核标定，游戏坐标用于入库
@@ -108,6 +152,7 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
 
     instance.on('moveend zoomend', () => {
       zoom.value = instance.getZoom()
+      updateRegionLabels()
     })
 
     instance.setView(bounds.getCenter(), INITIAL_ZOOM, { animate: false })
@@ -115,6 +160,7 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
     map.value = instance
     renderPin()
     zoom.value = instance.getZoom()
+    updateRegionLabels()
     mapReady.value = true
   })
 
@@ -125,6 +171,11 @@ export function useMap({ geometry, mapConfig, pinPoint, onMapClick }) {
   })
 
   watch(pinPoint, renderPin, { deep: true })
+  watch(regionPoints, () => {
+    renderRegionLabels()
+    updateRegionLabels()
+  }, { deep: true })
+  watch(() => showRegionLabels?.value, updateRegionLabels)
 
   return {
     mapElement,

@@ -19,6 +19,12 @@ const props = defineProps({
   draftReady: { type: Boolean, default: false },
   draftMissing: { type: Array, default: () => [] },
   categoryOptions: { type: Array, default: () => [] },
+  // 落点后按区域自动判定的结果；null = 还没落点或判不出来
+  autoCategory: { type: Object, default: null },
+  // 当前分类是不是「自动选上的」（用户没手动改过）
+  autoCategoryApplied: { type: Boolean, default: false },
+  // 地图上的区域名标记开关
+  showRegionLabels: { type: Boolean, default: true },
   // 由工作台注入：游戏坐标 → 标定像素 / 参考区域（都来自 shared 的 geometry 与题库索引）
   toPixel: { type: Function, required: true },
   regionOf: { type: Function, required: true },
@@ -34,6 +40,8 @@ const emit = defineEmits([
   'clear-pending',
   'submit',
   'focus',
+  'category-changed',
+  'toggle-region-labels',
 ])
 
 const fileInput = ref(null)
@@ -77,19 +85,36 @@ function openFilePicker() {
   fileInput.value?.click()
 }
 
-// 参考区域 = 离落点最近的已标注区域。这只是提示，不是权威归属，
-// 所以文案里说明「最近」，并在悬停里给出距离与该区域题量。
+// 参考区域 = 用 400 个带真实区域名的参考点做 kNN 判出来的区域（见 shared/regionClassify）。
+// 这是「推断」不是「权威」，所以：置信度低时标出来、落在参考点覆盖之外时说明原因，
+// 并把距离一起给出去，让人能自己判断要不要改。
 function regionText(region) {
   if (!region) return '—'
-  return region.inside ? `${region.label}（最近）` : `${region.label}（最近，稍远）`
+  if (region.reason === 'declared') return `${region.label}（已标注）`
+  if (region.outsideCoverage) return `${region.label}（覆盖之外）`
+  if (region.confidence < 0.6) return `${region.label}（交界，待复核）`
+  return region.label
 }
 
 function regionTitle(region) {
   if (!region) return '先在地图上点选答案位置'
-  const distanceKm = (region.distance / 1000).toFixed(1)
-  return `离该落点最近的已标注区域是「${region.label}」，`
-    + `距其点位重心约 ${distanceKm}k 像素；该区域已录入 ${region.count} 个点位。`
-    + '区域边界以游戏内为准，这里只作提示。'
+  const distance = `${region.nearestDistance} 标定像素`
+  const base = `按 400 个带区域名的参考点做 kNN 投票，落点判为「${region.label}」：`
+  if (region.reason === 'declared') return '该点位数据里已写明区域，直接采信。'
+
+  const detail = region.outsideCoverage
+    ? `离最近参考点 ${distance}，超出覆盖半径，说明落在参考点覆盖之外`
+      + `（投票本来会给「${region.votedLabel || '?'}」），因此归入兜底区域`
+    : `置信度 ${(region.confidence * 100).toFixed(0)}%，离最近参考点 ${distance}`
+
+  return `${base}${detail}。该区域有 ${region.referenceCount} 个参考点；`
+    + '留一法自检准确率 96.8%，交界处投票会分散，置信度低时建议人工确认。'
+}
+
+// 分类下拉被手动改过：撤销「已按区域自动选择」的标记，
+// 免得界面还宣称是自动选的，而实际值已经被人改掉了。
+function handleCategoryChange() {
+  emit('category-changed')
 }
 </script>
 
@@ -165,6 +190,15 @@ function regionTitle(region) {
     <section class="panel-block">
       <header class="panel-block__head">
         <h3>答案位置</h3>
+        <label class="switch switch--inline" title="区域名标记不泄露具体点位，只是区域级参照">
+          <input
+            type="checkbox"
+            :checked="showRegionLabels"
+            data-testid="toggle-region-labels"
+            @change="emit('toggle-region-labels', $event.target.checked)"
+          />
+          <span>显示区域名</span>
+        </label>
         <button
           v-if="draft.point"
           type="button"
@@ -196,7 +230,8 @@ function regionTitle(region) {
         </p>
       </div>
       <p class="panel-note panel-note--tight">
-        参考区域 = 离落点最近的已标注区域，只作提示；题目归属由下面选的「分类」决定。
+        参考区域按 400 个带区域名的参考点做 kNN 投票判出来，并会用它自动预选下面的「分类」；
+        交界处置信度会下降，可随手改。
       </p>
     </section>
 
@@ -218,7 +253,11 @@ function regionTitle(region) {
       <div class="field-row">
         <label class="field">
           <span>分类</span>
-          <select v-model="draft.categoryId" data-testid="field-category">
+          <select
+            v-model="draft.categoryId"
+            data-testid="field-category"
+            @change="handleCategoryChange"
+          >
             <option v-for="category in categoryOptions" :key="category.id" :value="category.id">
               {{ category.label }}（{{ category.group || '未分组' }}）
             </option>
@@ -236,6 +275,28 @@ function regionTitle(region) {
           />
         </label>
       </div>
+
+      <!-- 落点后按区域自动选分类的结果；手动改过分类就不再宣称「自动」 -->
+      <p
+        v-if="autoCategory && autoCategoryApplied && autoCategory.categoryId"
+        class="panel-note panel-note--tight"
+        data-testid="auto-category"
+      >
+        已按落点自动选择「{{ autoCategory.label }}」
+        <template v-if="autoCategory.needsReview">
+          · <b class="warn-inline">建议复核</b>（{{
+            autoCategory.outsideCoverage
+              ? '落在参考点覆盖之外'
+              : `交界处，置信度 ${(autoCategory.confidence * 100).toFixed(0)}%`
+          }}）
+        </template>
+      </p>
+      <p v-else-if="autoCategory && !autoCategory.categoryId" class="panel-note panel-note--tight">
+        落点判为「{{ autoCategory.label }}」，但分类表里没有同名区域分类，请手动选择。
+      </p>
+      <p v-else-if="autoCategory" class="panel-note panel-note--tight">
+        已手动指定分类（落点判为「{{ autoCategory.label }}」）。
+      </p>
 
       <label class="field">
         <span>备注（可选）</span>

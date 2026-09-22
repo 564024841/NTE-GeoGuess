@@ -40,6 +40,19 @@ function calibration() {
   return cachedCalibration
 }
 
+// 区域名标签的落点。
+// 读不到时返回空数组而不是报错：前端会回退到构建时内联的那份
+// （packages/shared/data/region-positions.json），地图上照常显示区域名。
+// 这样运维可以直接挂一个文件覆盖它（REGION_POSITIONS_FILE），不必重新构建前端。
+function regionPositions() {
+  try {
+    const parsed = readJsonFile(config.regionPositionsFile, '区域落点文件')
+    return Array.isArray(parsed?.regions) ? parsed.regions : []
+  } catch {
+    return []
+  }
+}
+
 // bootstrap 内容是「数据变了才变」，用 ETag 让浏览器复用缓存
 function computeEtag(payload) {
   const hash = crypto.createHash('sha1')
@@ -94,6 +107,8 @@ export function registerPublicRoutes(app) {
     const payload = {
       map: mapConfig(),
       calibration: calibration(),
+      // 区域名标签的落点；运维可用 REGION_POSITIONS_FILE 覆盖而无需重建前端
+      regionPositions: regionPositions(),
       categories: listCategories(),
       locations,
       stats: {

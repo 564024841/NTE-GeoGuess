@@ -1,78 +1,88 @@
-// 后台出题时的「参考区域」。
+// 后台的区域判定：既用于地图上的区域名标记，也用于「按答案位置自动选分类」。
 //
-// 以前这里复算过九宫格（北西/中中…），现在区域只有一种表达：区域分类
-// （向阳岛 / 米格尔区 / 薄暮区 / 未标注 …）。所以这个模块改成
-// 「离你点的位置最近的已标注区域」——它只是一个提示，不是权威归属，
-// 因为区域边界是游戏设定，数据里并没有边界几何。
+// 早期版本是从「题库点位」算各区域重心再取最近的一个。那个做法现在必然失效：
+// 6 个区域分类的点位在数据整理中被删掉了，题库里只剩「未标注」和「薄暮区」，
+// 于是只能算出两个区域，永远推不出米格尔区之类。
 //
-// 想给出有意义的最近区域，就要有参照点。这里用各区域已有点位的重心，
-// 同时把距离一起返回，让界面能如实说明这个提示有多可信。
+// 现在改用 packages/shared/data/region-reference.json 里的 400 个带真实区域名的
+// 参考点做 kNN 分类（留一法准确率 96.8%），这也是 scripts/classify-regions.mjs
+// 给题库做批量归类时用的同一套算法 —— 后台拾取和批量归类因此不会互相打架。
+import {
+  buildRegionReferenceIndex,
+  createRegionClassifier,
+} from '@nte-geoguess/shared/regionClassify'
 
-function distance(a, b) {
-  return Math.hypot(a.pixelX - b.pixelX, a.pixelY - b.pixelY)
+// geometry: createGeometry(...) 的返回值
+export function createRegionResolver(geometry) {
+  if (!geometry?.gameToMapPixel) return () => null
+
+  const toPixel = (point) => geometry.gameToMapPixel(point)
+  const classifier = createRegionClassifier(toPixel)
+  const index = buildRegionReferenceIndex(toPixel)
+  const indexByLabel = new Map(index.map((entry) => [entry.label, entry]))
+
+  // point: 游戏坐标 { x, y }；location: 可选，点位自带的 region / district 可以直接采信
+  return function resolveRegion(point, location = null) {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null
+
+    // 点位已经写明归属（后台上传时人工选过，或批量归类写过 region 字段）时直接采信
+    const declared = String(location?.region || '').trim()
+    if (declared && indexByLabel.has(declared)) {
+      const entry = indexByLabel.get(declared)
+      return {
+        label: declared,
+        reason: 'declared',
+        confidence: 1,
+        nearestDistance: 0,
+        referenceCount: entry.count,
+      }
+    }
+
+    const pixel = toPixel(point)
+    const result = classifier(pixel)
+    if (!result) return null
+
+    const entry = indexByLabel.get(result.label)
+    return {
+      label: result.label,
+      reason: result.reason,
+      confidence: result.confidence,
+      nearestDistance: result.nearestDistance,
+      // 该区域有多少参考点；薄暮区是兜底区域，没有参考点
+      referenceCount: entry?.count || 0,
+      votedLabel: result.votedLabel || null,
+      // 落在参考点覆盖之外（地图西北那块飞地）时，投票结果会投给相邻城区，
+      // 这个标志让界面能说清楚「为什么判成了薄暮区」
+      outsideCoverage: result.reason === 'outside-coverage',
+    }
+  }
 }
 
-// index 是 buildPuzzleIndex 的返回值
-export function createRegionResolver(index) {
-  const puzzles = index?.puzzles || []
-  if (!puzzles.length) return () => null
+// 各区域的重心，用于在地图上摆区域名标签。
+// 薄暮区没有参考点（它是「覆盖之外」的兜底），所以传进来的 supplement 可以补上它。
+export function regionLabelPoints(geometry, supplement = []) {
+  if (!geometry?.gameToMapPixel) return []
+  const toPixel = (point) => geometry.gameToMapPixel(point)
 
-  // 各区域的重心与范围（用像素坐标，与 index 内部同一套）
-  const stats = new Map()
-  for (const puzzle of puzzles) {
-    const id = puzzle.regionId
-    if (!id) continue
-    if (!stats.has(id)) {
-      stats.set(id, {
-        id,
-        label: puzzle.regionLabel || id,
-        count: 0,
-        sumX: 0,
-        sumY: 0,
-        minX: Number.POSITIVE_INFINITY,
-        maxX: Number.NEGATIVE_INFINITY,
-        minY: Number.POSITIVE_INFINITY,
-        maxY: Number.NEGATIVE_INFINITY,
-      })
-    }
-    const entry = stats.get(id)
-    entry.count += 1
-    entry.sumX += puzzle.pixel.pixelX
-    entry.sumY += puzzle.pixel.pixelY
-    entry.minX = Math.min(entry.minX, puzzle.pixel.pixelX)
-    entry.maxX = Math.max(entry.maxX, puzzle.pixel.pixelX)
-    entry.minY = Math.min(entry.minY, puzzle.pixel.pixelY)
-    entry.maxY = Math.max(entry.maxY, puzzle.pixel.pixelY)
-  }
-
-  const regions = [...stats.values()].map((entry) => ({
-    ...entry,
-    centroidX: entry.sumX / entry.count,
-    centroidY: entry.sumY / entry.count,
+  const points = buildRegionReferenceIndex(toPixel).map((entry) => ({
+    id: entry.label,
+    label: entry.label,
+    pixelX: entry.centroidX,
+    pixelY: entry.centroidY,
+    referenceCount: entry.count,
   }))
 
-  // pixel: { pixelX, pixelY }（标定像素）
-  return function resolveRegion(pixel) {
-    if (!pixel || !Number.isFinite(pixel.pixelX) || !Number.isFinite(pixel.pixelY)) return null
-    if (!regions.length) return null
-
-    let best = null
-    for (const region of regions) {
-      const d = distance(pixel, { pixelX: region.centroidX, pixelY: region.centroidY })
-      if (!best || d < best.distance) best = { region, distance: d }
-    }
-
-    // 是否落在该区域已有点位的包围盒里——落在里面说明这个提示比较可信
-    const inside = pixel.pixelX >= best.region.minX && pixel.pixelX <= best.region.maxX
-      && pixel.pixelY >= best.region.minY && pixel.pixelY <= best.region.maxY
-
-    return {
-      id: best.region.id,
-      label: best.region.label,
-      count: best.region.count,
-      // 到该区域重心的距离（单位：标定像素）
-      distance: Math.round(best.distance),
-      inside,
-    }
+  const known = new Set(points.map((point) => point.label))
+  for (const extra of supplement) {
+    if (!extra?.label || known.has(extra.label)) continue
+    points.push({
+      id: extra.id || extra.label,
+      label: extra.label,
+      pixelX: Number(extra.x ?? extra.pixelX),
+      pixelY: Number(extra.y ?? extra.pixelY),
+      referenceCount: 0,
+    })
   }
+
+  return points.filter((point) => Number.isFinite(point.pixelX) && Number.isFinite(point.pixelY))
 }

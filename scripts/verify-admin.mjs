@@ -242,6 +242,83 @@ try {
   check(answerMeta.values.length >= 3,
     `回显游戏坐标 / 底图像素 / 参考区域 => ${answerMeta.values.join(' | ')}`)
 
+  // ---------- 4a. 落点后按区域自动分类 ----------
+  {
+    const auto = await page.evaluate(() => {
+      const note = document.querySelector('[data-testid="auto-category"]')
+      const select = document.querySelector('[data-testid="field-category"]')
+      const slot = document.querySelector('[data-testid="answer-slot"]')
+      const regionText = [...(slot?.querySelectorAll('strong') ?? [])]
+        .map((node) => node.textContent.trim())
+        .find((text) => text.includes('区') || text.includes('岛')) || ''
+      return {
+        note: note ? note.textContent.replace(/\s+/g, ' ').trim() : null,
+        category: select?.value || null,
+        categoryText: select ? select.options[select.selectedIndex]?.textContent.trim() : null,
+        regionText,
+      }
+    })
+
+    check(Boolean(auto.note), `落点后出现自动分类提示 => 「${auto.note}」`)
+    check(/已按落点自动选择/.test(auto.note || ''), '提示说明分类是「按落点自动选择」的')
+    check(Boolean(auto.category), `分类被自动设置 => 「${auto.categoryText}」`)
+    // 自动选中的分类应当就是落点判出来的区域（标签对得上）
+    const regionLabel = (auto.regionText.match(/[\u4e00-\u9fa5]+(?:区|岛)/) || [])[0] || ''
+    check(Boolean(regionLabel) && (auto.categoryText || '').includes(regionLabel),
+      `自动分类与参考区域一致 => 区域「${regionLabel}」vs 分类「${auto.categoryText}」`)
+
+    // 手动改分类后，「自动选择」的说法要撤销，免得界面撒谎
+    await page.locator('[data-testid="field-category"]').selectOption({ index: 0 })
+    await page.waitForTimeout(500)
+    const afterManual = await page.evaluate(() => {
+      const note = document.querySelector('[data-testid="auto-category"]')
+      const notes = [...document.querySelectorAll('.panel-note--tight')]
+        .map((node) => node.textContent.replace(/\s+/g, ' ').trim())
+      return {
+        autoNote: note ? note.textContent.trim() : null,
+        manualNote: notes.find((text) => text.includes('手动指定分类')) || null,
+      }
+    })
+    check(!afterManual.autoNote, '手动改分类后不再显示「已自动选择」')
+    check(Boolean(afterManual.manualNote), `改为提示已手动指定 => 「${afterManual.manualNote}」`)
+  }
+
+  // ---------- 4b. 地图上的区域名标记 ----------
+  {
+    const atInitial = await page.evaluate(() => document.querySelectorAll('.region-label').length)
+    check(atInitial === 0, `初始缩放下区域名隐藏（${atInitial} 个）`)
+
+    // 放大到 -2：区域名标签才出现
+    await page.locator('.map-hud__actions button[title="放大"]').click()
+    await page.waitForTimeout(900)
+    const labels = await page.evaluate(() =>
+      [...document.querySelectorAll('.region-label')].map((node) => node.textContent.trim()))
+    const expectedRegions = ['向阳岛', '新赫兰德区', '未闻浦', '桥间地', '米格尔区', '绘空町', '薄暮区']
+    check(labels.length === expectedRegions.length,
+      `放大后出现 ${labels.length} 个区域名 => ${labels.join('、')}`)
+    check(expectedRegions.every((name) => labels.includes(name)), '7 个区域名齐全')
+
+    // 区域名标记不该拦住地图点击（否则点不中落点）
+    const canvas = await page.locator('.leaflet-container').boundingBox()
+    await page.mouse.click(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.5)
+    await page.waitForTimeout(600)
+    const stillSet = await page.evaluate(() =>
+      document.querySelector('[data-testid="answer-slot"]')?.classList.contains('is-set'))
+    check(Boolean(stillSet), '区域名可见时仍能在地图上落点')
+
+    // 开关
+    await page.locator('[data-testid="toggle-region-labels"]').uncheck()
+    await page.waitForTimeout(500)
+    check((await page.evaluate(() => document.querySelectorAll('.region-label').length)) === 0,
+      '关掉开关后区域名隐藏')
+    await page.locator('[data-testid="toggle-region-labels"]').check()
+    await page.waitForTimeout(500)
+    check((await page.evaluate(() => document.querySelectorAll('.region-label').length)) === expectedRegions.length,
+      '重新打开后区域名恢复')
+
+    await shot('admin-04a-region-labels.png')
+  }
+
   await page.locator('[data-testid="field-name"]').fill(NAME_A)
   check(await savePending.isEnabled(), '截图 + 位置齐备后可保存')
   await savePending.click()

@@ -30,6 +30,7 @@ const {
   stats,
   categories,
   geometry,
+  regionPositions,
   index,
   load: loadBootstrap,
   addCategory,
@@ -71,6 +72,7 @@ function handleCategoryCreated(category) {
     <template v-if="workspaceReady">
       <MapWorkspace
         :geometry="geometry"
+        :region-positions="regionPositions"
         :map-config="mapConfig"
         :index="index"
         :categories="categories"

@@ -16,7 +16,7 @@ import { useMap } from '../composables/useMap'
 import { useNotices } from '../composables/useNotices'
 import { useQuestionEditor } from '../composables/useQuestionEditor'
 import { useQuestionList } from '../composables/useQuestionList'
-import { createRegionResolver } from '../utils/region'
+import { createRegionResolver, regionLabelPoints as regionLabelPointsFor } from '../utils/region'
 import MapHud from './MapHud.vue'
 import QuestionEditorPanel from './QuestionEditorPanel.vue'
 import QuestionListPanel from './QuestionListPanel.vue'
@@ -24,6 +24,8 @@ import CategoryPanel from './CategoryPanel.vue'
 
 const props = defineProps({
   geometry: { type: Object, required: true },
+  // 区域落点（来自 bootstrap；薄暮区靠它补上，因为它没有参考点）
+  regionPositions: { type: Array, default: () => [] },
   mapConfig: { type: Object, required: true },
   index: { type: Object, required: true },
   categories: { type: Array, default: () => [] },
@@ -38,11 +40,16 @@ const { ask } = useConfirm()
 
 const tab = ref('editor')
 
-// 游戏坐标 → 标定像素 → 九宫格区域。
-// 区域清单与题量来自 shared 的 buildPuzzleIndex，网格边界由 utils/region 复算（原因见该文件）。
-const regionResolver = createRegionResolver(props.index)
+// 游戏坐标 → 标定像素 → 区域。判据是 400 个带真实区域名的参考点做 kNN 投票
+// （见 shared/regionClassify 与 utils/region 的说明）。
+const regionResolver = createRegionResolver(props.geometry)
 const toPixel = (point) => props.geometry.gameToMapPixel(point)
-const regionOf = (point) => (point ? regionResolver(toPixel(point)) : null)
+const regionOf = (point, location = null) => (point ? regionResolver(point, location) : null)
+
+// 地图上的区域名标记：6 个城区的落点由参考点重心算出，
+// 薄暮区没有参考点（它是「覆盖之外」的兜底区域），用数据文件里的落点补上
+const regionLabelPoints = computed(() => regionLabelPointsFor(props.geometry, props.regionPositions || []))
+const showRegionLabels = ref(true)
 
 const categoriesRef = computed(() => props.categories)
 
@@ -72,6 +79,8 @@ const {
   cancelEdit,
   saveEdit,
   syncDefaultCategory,
+  autoCategory,
+  autoCategoryApplied,
 } = editor
 
 const list = useQuestionList()
@@ -109,8 +118,15 @@ const { mapElement, zoom, cursors, focusPoint, shiftZoom, resetView } = useMap({
   geometry: props.geometry,
   mapConfig: props.mapConfig,
   pinPoint,
+  regionPoints: regionLabelPoints,
+  showRegionLabels,
   onMapClick: handleMapClick,
 })
+
+// 手动改了分类：撤销「已按区域自动选择」的标记，免得界面还宣称是自动选的
+function handleCategoryChanged() {
+  autoCategoryApplied.value = false
+}
 
 function handleMapClick(point) {
   // 只有出题/改题时才把点击当作答案位置；其它页面点地图不该悄悄改草稿
@@ -282,6 +298,9 @@ const questionTotalLabel = computed(() => {
         :draft-ready="draftReady"
         :draft-missing="draftMissing"
         :category-options="categoryOptions"
+        :auto-category="autoCategory"
+        :auto-category-applied="autoCategoryApplied"
+        :show-region-labels="showRegionLabels"
         :to-pixel="toPixel"
         :region-of="regionOf"
         @upload="setImage"
@@ -293,6 +312,8 @@ const questionTotalLabel = computed(() => {
         @clear-pending="clearPending"
         @submit="submitBatch"
         @focus="handleFocus"
+        @category-changed="handleCategoryChanged"
+        @toggle-region-labels="(value) => (showRegionLabels = value)"
       />
 
       <QuestionListPanel

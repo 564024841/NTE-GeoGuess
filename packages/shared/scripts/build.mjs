@@ -27,6 +27,7 @@ const result = await build({
     constants: path.join(root, 'src/constants.js'),
     format: path.join(root, 'src/format.js'),
     regionPositions: path.join(root, 'src/regionPositions.js'),
+    regionClassify: path.join(root, 'src/regionClassify.js'),
     images: path.join(root, 'src/images.js'),
     imageRegistry: path.join(root, 'src/imageRegistry.js'),
   },

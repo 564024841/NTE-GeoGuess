@@ -32,6 +32,7 @@
     "qa:admin": "node scripts/verify-admin.mjs",
     "migrate:regions": "node scripts/migrate-regions.mjs",
     "add:region-twilight": "node scripts/add-region-twilight.mjs",
+    "classify:regions": "node scripts/classify-regions.mjs",
     "remove:imageless": "node scripts/remove-imageless.mjs",
     "tiles:verify": "node scripts/tiles.mjs verify",
     "tiles:fetch": "node scripts/tiles.mjs fetch",

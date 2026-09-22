@@ -17,6 +17,9 @@ import { api, describeApiError, readFileAsDataUrl } from '../api'
 
 // 分类为空时（例如分类表还没初始化）用它兜底，与服务端的兜底分类同名
 const FALLBACK_CATEGORY_ID = 'question-bank'
+// 区域分类的 group 名（数据里的分类表就是这么标的）。
+// 用它筛出区域分类，而不是维护一份「区域名 → 分类 id」的映射表——那种表一定会漂。
+const REGION_GROUP = '区域'
 const MAX_NAME_LENGTH = 60
 const MAX_DISTRICT_LENGTH = 20
 const MAX_DESCRIPTION_LENGTH = 120
@@ -50,6 +53,12 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
   const status = reactive({ kind: 'idle', message: '' })
   const submitting = ref(false)
 
+  // 落点后按区域自动判定的结果。null = 还没落点或判定不出来。
+  // autoCategoryApplied 表示这个分类确实是自动选上的（而不是用户自己选的），
+  // 界面据此决定要不要显示「已按区域自动选择」这类提示。
+  const autoCategory = ref(null)
+  const autoCategoryApplied = ref(false)
+
   const categoryOptions = computed(() => {
     const list = categories.value || []
     if (list.length) return list
@@ -72,6 +81,41 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     draft.point && regionResolver ? regionResolver(draft.point) : null
   ))
 
+  // 按区域名找对应的分类。区域分类的 label 就是区域名（米格尔区 / 薄暮区 …），
+  // 所以这里按 label 匹配，避免再维护一份「区域名 → 分类 id」的映射表（那种表一定会漂）。
+  function regionCategoryByLabel(label) {
+    if (!label) return null
+    return (categoryOptions.value || []).find(
+      (category) => category.group === REGION_GROUP && category.label === label,
+    ) || null
+  }
+
+  // 落点后自动选分类。
+  // 判定用 kNN 参考点分类（见 shared/regionClassify），置信度低或落在覆盖之外时
+  // 仍然给出建议，但把 autoCategory 标成「需复核」，让使用者一眼看到该不该改。
+  function applyAutoCategory() {
+    if (!draft.point || !regionResolver) return
+    const region = regionResolver(draft.point)
+    if (!region) return
+
+    autoCategory.value = {
+      label: region.label,
+      categoryId: regionCategoryByLabel(region.label)?.id || null,
+      reason: region.reason,
+      confidence: region.confidence,
+      nearestDistance: region.nearestDistance,
+      outsideCoverage: Boolean(region.outsideCoverage),
+      // 置信度低于这个值就提示人工复核（交界处的点投票会分散）
+      needsReview: region.reason !== 'declared'
+        && (region.confidence < 0.6 || Boolean(region.outsideCoverage)),
+    }
+
+    if (autoCategory.value.categoryId) {
+      draft.categoryId = autoCategory.value.categoryId
+      autoCategoryApplied.value = true
+    }
+  }
+
   function setStatus(kind, message) {
     status.kind = kind
     status.message = message || ''
@@ -79,6 +123,8 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
 
   function resetDraft() {
     Object.assign(draft, emptyDraft())
+    autoCategory.value = null
+    autoCategoryApplied.value = false
   }
 
   // 新题默认选第一个分类，省掉一次必填的下拉操作
@@ -124,6 +170,8 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
   function setPoint(point) {
     if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
     draft.point = { x: Number(point.x), y: Number(point.y) }
+    // 先按区域自动选分类，再兜底默认分类（自动判定失败时才用第一个）
+    applyAutoCategory()
     syncDefaultCategory()
   }
 
@@ -297,6 +345,8 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     draftReady,
     draftMissing,
     draftRegion,
+    autoCategory,
+    autoCategoryApplied,
     setImage,
     clearImage,
     setPoint,
