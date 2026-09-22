@@ -59,8 +59,10 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 `deploy/.env` 里设 `TILES_HOST_DIR=<瓦片目录>`；compose 里对应这一行：
 
 ```yaml
-      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles
+      - "${TILES_HOST_DIR:-./tiles}:/srv/tiles"
 ```
+
+宿主目录**必须可写**（而且不要挂成 `:ro`）：瓦片缺失时容器启动自检要往里下载补全。
 
 **更新瓦片**：直接往这个宿主目录里覆盖 `{z}/{x}/{y}.jpg` 即可——服务端按请求读盘，
 上传完立即生效，不用重建镜像、也不用重启容器（想复查就 `docker compose restart app`，
@@ -72,7 +74,7 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 ### 内容数据（题库 / 坐标标定 / 区域落点）也不走 git
 
 仓库里的 `packages/shared/data/*.json` 只是**最基本的骨架**，真正的数据放在宿主机上，
-由 compose 挂进容器 `/srv/data-json`（只读），并用环境变量指路：
+由 compose 挂进容器 `/srv/data-json`，并用环境变量指路：
 
 | 文件 | 容器内路径 | 环境变量 | 作用 |
 | --- | --- | --- | --- |
@@ -82,8 +84,11 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 
 ```yaml
     volumes:
-      - ${SHARED_DATA_HOST_DIR:-../shared-data}:/srv/data-json:ro
+      - "${SHARED_DATA_HOST_DIR:-./data-json}:/srv/data-json"
 ```
+
+这个目录同样要**可写**（不要 `:ro`）：文件缺失时容器启动自检会从仓库 raw 下载一份补进来，
+并一直留在宿主目录里（下次不会重复下载）。
 
 **更新这些数据**：直接覆盖宿主目录里的文件。
 题库快照（`map-data.json`）改了之后需要让它重新导入（seed 只在 `meta.seed_version` 不匹配时跑）：
@@ -92,26 +97,39 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 
 ---
 
-## 宝塔面板：用 Compose 项目部署（单文件 compose）
+## 宝塔面板：用 Compose 项目部署
 
-不想用 `.env` 文件、也不想在宿主上散落配置时，直接用仓库里的
-[`deploy/docker-compose.standalone.yml`](../deploy/docker-compose.standalone.yml)：
-**环境变量全部内联在 compose 里**，把这个文件（或它的内容）交给宝塔的
-「Docker → Compose 项目 → 添加」即可。
+宝塔的「Docker → Compose 项目 → 添加」有两个输入框：**Compose** 和 **env**。
+
+| 输入框 | 粘什么 |
+| --- | --- |
+| Compose | [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) 的全部内容 |
+| env | [`deploy/.env.example`](../deploy/.env.example) 的全部内容（至少改 `ADMIN_PASSWORD`，三个宿主目录写绝对路径） |
+
+env 框里只提供 compose 里 `${...}` 的取值，**不会进容器**（进容器的是 compose 里 `environment:`
+那段）。所以镜像固定、数据路径固定，只有密码/端口/宿主目录需要你改。
+
+只想粘一个文件、不想管 env 时，用
+[`deploy/docker-compose.standalone.yml`](../deploy/docker-compose.standalone.yml)
+（环境变量全部内联写死），贴进 Compose 框即可。
 
 ### 目录是怎么绑定的
 
 宝塔会把 compose 项目建在 `/www/server/panel/data/compose/<项目名>/`，
 **compose 里的相对路径就是相对这个项目目录解析的**（宝塔自己的 Compose 项目都这么用，
 例如 Forgejo 的 `./forgejo:/data` 实际就是 `/www/server/panel/data/compose/Forgejo/forgejo`）。
-所以用相对路径最省事：
 
-```yaml
-    volumes:
-      - ./data:/data                    # → <项目目录>/data
-      - ./tiles:/srv/tiles              # → <项目目录>/tiles
-      - ./data-json:/srv/data-json      # → <项目目录>/data-json
+本次部署用的是**绝对路径**（写死在 env 框里），指向宝塔给这个项目建的那个目录 ——
+这样项目目录之外的地方不会莫名多出数据目录：
+
+```dotenv
+DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data
+TILES_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/tiles
+SHARED_DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data-json
 ```
+
+如果宝塔里项目名不叫 `nte-geoguess`，把三行里的目录名一起换掉；也可以用相对路径
+`./data`、`./tiles`、`./data-json`（效果一样，就是依赖"项目目录"这个前提）。
 
 也就是要在项目目录里准备好：
 
@@ -149,8 +167,8 @@ sudo chown -R 1000:1000 data tiles data-json
 
 | 检查项 | 缺失时的行为 | 相关变量 |
 | --- | --- | --- |
-| 底图瓦片（`$TILES_DIR/0`） | **先探 `$TILES_DIR` 可不可写**：可写才从 `codeload.github.com/<MAPSOURCE_REPO>` 下载解压；不可写直接退出（不会白下载） | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
-| 题库快照 / 坐标标定 / 区域落点 | 缺哪个补哪个：优先写回该文件所在目录（挂载进来即可持久化），目录不可写才退到 `$DATA_JSON_CACHE_DIR`，再不行回退镜像内置副本 | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH`、`DATA_JSON_CACHE_DIR` |
+| 底图瓦片（`$TILES_DIR` 里有没有 `*.jpg`） | **先探 `$TILES_DIR` 可不可写**：可写才把 `codeload.github.com/<MAPSOURCE_REPO>` 的 tar.gz 解到 `$TILES_DIR` 下的隐藏暂存目录、再复制到位；不可写或下载失败 → **直接报错退出**（不会白下载几十 MB） | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
+| 题库快照 / 坐标标定 / 区域落点 | 缺哪个就下载到**它所在的挂载目录**（持久化）：先试 `raw.githubusercontent.com`，再试 `cdn.jsdelivr.net` 镜像；目录不可写、两个源都失败 → **直接报错退出** | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH` |
 
 要点：
 
@@ -158,8 +176,10 @@ sudo chown -R 1000:1000 data tiles data-json
 - 自动下载需要**写入权限**：`data/`、`tiles/`、`data-json/` 都按可写准备（`chown -R 1000:1000`，且**不要加 `:ro`**）。
   目录不可写时脚本会**先探测、直接退出并说明原因**，不会反复下载同一个 30MB 包。
 - 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH` 设成 `0`，
-  自己把 `tiles/`、`data-json/` 准备好即可。
-- `DATA_JSON_CACHE_DIR` 默认在容器内的 `/tmp`（随容器生命周期）；想持久化就挂一个卷到它。
+  自己把 `tiles/`、`data-json/` 准备好即可；此时文件缺失会**直接报错退出**，不会静默降级。
+- 所有下载都只写进挂载目录（`/srv/tiles`、`/srv/data-json`），**不会回退到 `/tmp`、也不会回退到
+  镜像里那份骨架** —— 宁可启动失败并打印原因，也不要起一个数据不对的服务。
+- 已经有文件时自检只打印"就绪"，不会重新下载。上次被强杀留下的隐藏暂存目录，下次启动会先清掉。
 
 ---
 
@@ -195,8 +215,10 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f --tai
 | `ADMIN_PASSWORD` | 无（必填） | 后台登录密码；留空则后台接口禁用 |
 | `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 只监听本机交给 nginx 反代；想直接暴露就设 `0.0.0.0:8080` |
 | `DATA_HOST_DIR` | `./data` | SQLite + 上传截图，务必持久化并备份 |
-| `TILES_HOST_DIR` | `../../MapSource/tiles` | 底图瓦片目录（镜像不含瓦片，必须挂载） |
-| `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
+| `TILES_HOST_DIR` | `./tiles` | 底图瓦片目录（镜像不含瓦片，必须挂载，且容器要能写） |
+| `SHARED_DATA_HOST_DIR` | `./data-json` | 题库快照 / 坐标标定 / 区域落点所在目录，同样要能写 |
+| `COOKIE_SECURE` | `true` | 走 HTTPS 保持 `true`；纯 HTTP 调试才设 `false` |
+| `REQUIRE_TILES` | `1` | 瓦片缺失时拒绝启动；设 `0` 只告警（底图会全黑） |
 
 首次启动会自动把内置题库导入 SQLite，日志里出现
 `[seed] 已导入内置数据：分类 8、点位 476`。

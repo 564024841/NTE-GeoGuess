@@ -79,9 +79,10 @@ npm run tiles:verify    # 校验：z=0 的 x 目录数、抽样 7 张瓦片、�
 npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 ```
 
-生产建议设 `REQUIRE_TILES=1`：瓦片缺失或不完整时服务端拒绝启动，
+生产建议设 `REQUIRE_TILES=1`：瓦片缺失时服务端拒绝启动，
 避免「服务起来了但底图全黑」这种难排查的状态（`deploy/docker-compose.yml` 默认已开）。
-以镜像方式部署时，若不想在服务器上拉瓦片，也可以用 `--build-arg INCLUDE_TILES=1` 把瓦片打进镜像。
+镜像**不含**瓦片（避免再分发无许可证声明的底图）：容器启动自检发现瓦片目录里没有 jpg 时会自动拉一份，
+下载位置就是挂载进来的宿主目录，所以数据是持久的。
 
 ---
 
@@ -212,13 +213,17 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 `/srv/data-json`（compose 默认已配好 `SHARED_DATA_HOST_DIR`），改文件即生效
 （其中题库快照需要 `FORCE_SEED=1` 重启一次让它重新导入）。
 
-不想用 `.env`、想交给宝塔的「Docker → Compose 项目」管理时，用
-[`deploy/docker-compose.standalone.yml`](deploy/docker-compose.standalone.yml)：
-环境变量全部内联，卷用相对路径（宝塔会解析到 `/www/server/panel/data/compose/<项目名>/`）。
+想交给宝塔的「Docker → Compose 项目」管理时，它的两个输入框分别粘
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml)（Compose 框）和
+[`deploy/.env.example`](deploy/.env.example)（env 框，三个宿主目录写绝对路径，
+指向 `/www/server/panel/data/compose/nte-geoguess/`）；只想粘一个文件就用
+[`deploy/docker-compose.standalone.yml`](deploy/docker-compose.standalone.yml)（变量全部内联）。
 细节见 [`docs/deployment.md`](docs/deployment.md) 的「宝塔面板：用 Compose 项目部署」。
 
-容器启动时会先自检：**瓦片目录为空、或内容数据 JSON 不存在，就自动从仓库下载补全**
-（`TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭，下载源支持内网镜像）。
+容器启动时会先自检：**瓦片目录里没有 jpg、或内容数据 JSON 不存在，就自动下载补全**
+（`TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭成"缺了就报错"）。
+补全只写进挂载的宿主目录；**目录不可写或下载失败 = 直接退出并说明原因**，
+没有"退到 `/tmp`"或"用镜像里那份旧骨架"的静默兜底。
 
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
