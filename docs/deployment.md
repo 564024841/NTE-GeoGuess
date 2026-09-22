@@ -96,8 +96,18 @@ REQUIRE_TILES=1
 cd NTE-GeoGuess
 cp deploy/.env.example deploy/.env
 # 编辑 deploy/.env，至少改掉 ADMIN_PASSWORD，并确认 TILES_HOST_DIR 指向瓦片目录
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+# 私有镜像需先登录 GHCR（PAT 至少需要 read:packages）
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-username> --password-stdin
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
+
+`deploy/docker-compose.yml` 默认拉取：
+
+- `ghcr.io/564024841/nte-geoguess-server:${IMAGE_TAG:-latest}`
+- `ghcr.io/564024841/nte-geoguess-web:${IMAGE_TAG:-latest}`
+
+如需覆盖，修改 `deploy/.env` 里的 `IMAGE_TAG`、`SERVER_IMAGE`、`WEB_IMAGE`。
 
 启动后：
 
@@ -121,7 +131,8 @@ curl -s http://127.0.0.1:8080/api/stats
 
 ```bash
 git pull
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
 
 数据在卷里，不会丢；`seed` 只在 `meta.seed_version` 变化时才会重跑。
