@@ -1,8 +1,9 @@
 # 图寻：服务端 + nginx（托管两个前端并反代 API）。
 #
 # 用法：
-#   cp deploy/.env.example deploy/.env      # 改掉 ADMIN_PASSWORD
-#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#   cp deploy/.env.example deploy/.env
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 #
 # 端口：
 #   8080  游戏站（公开）
@@ -17,10 +18,7 @@ name: nte-geoguess
 
 services:
   server:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: nte-geoguess-server:latest
+    image: ${SERVER_IMAGE:-ghcr.io/564024841/nte-geoguess-server}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -57,10 +55,7 @@ services:
     #   - "127.0.0.1:8787:8787"
 
   web:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.web
-    image: nte-geoguess-web:latest
+    image: ${WEB_IMAGE:-ghcr.io/564024841/nte-geoguess-web}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       - server
