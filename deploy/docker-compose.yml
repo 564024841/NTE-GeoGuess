@@ -36,7 +36,10 @@ services:
 
       TILES_DIR: /srv/tiles
       REQUIRE_TILES: "${REQUIRE_TILES:-1}"           # 瓦片缺失时拒绝启动，避免"服务起了但底图全黑"
-      TILE_URL_TEMPLATE: "${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}"
+      # 注意：这里不能写成 "${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}" ——
+      # compose 的变量替换遇到第一个 } 就结束，默认值里的 {z} 会把整行弄坏。
+      # 留空则由服务端用它自己的默认模板，一样是 /mapsource-tiles/{z}/{x}/{y}.jpg。
+      TILE_URL_TEMPLATE: "${TILE_URL_TEMPLATE:-}"
       TILE_REDIRECT_BASE: "${TILE_REDIRECT_BASE:-}"  # 交给对象存储/CDN 时填这里
 
       # 内容数据（题库快照 / 坐标标定 / 区域落点）：git 上只有最基本的一份，
