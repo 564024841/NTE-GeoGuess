@@ -18,6 +18,7 @@ name: nte-geoguess
 
 services:
   server:
+    # 仅使用 GHCR 镜像，不在本机 build
     image: ${SERVER_IMAGE:-ghcr.io/564024841/nte-geoguess-server}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
@@ -55,6 +56,7 @@ services:
     #   - "127.0.0.1:8787:8787"
 
   web:
+    # 仅使用 GHCR 镜像，不在本机 build
     image: ${WEB_IMAGE:-ghcr.io/564024841/nte-geoguess-web}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
