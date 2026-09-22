@@ -70,6 +70,8 @@
 
 - `calibration` 由前端交给 `createGeometry(map, calibration)`，前端据此自行算坐标，
   不需要为每个点位下发像素坐标。
+- `regionPositions` 是区域名标签的落点数组（`[{ id, label, x, y }]`，包一层
+  `{ regions: [...] }` 也认），游戏站与后台站都拿它在地图上写区域名。
 - 只下发**有截图**的点位（可选 `?includeAll=1` 拿全量，后台用）。
 - 响应带 `ETag`，客户端可用 `If-None-Match` 复用缓存。
 

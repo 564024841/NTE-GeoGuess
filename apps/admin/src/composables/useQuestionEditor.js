@@ -17,9 +17,6 @@ import { api, describeApiError, readFileAsDataUrl } from '../api'
 
 // 分类为空时（例如分类表还没初始化）用它兜底，与服务端的兜底分类同名
 const FALLBACK_CATEGORY_ID = 'question-bank'
-// 区域分类的 group 名（数据里的分类表就是这么标的）。
-// 用它筛出区域分类，而不是维护一份「区域名 → 分类 id」的映射表——那种表一定会漂。
-const REGION_GROUP = '区域'
 const MAX_NAME_LENGTH = 60
 const MAX_DISTRICT_LENGTH = 20
 const MAX_DESCRIPTION_LENGTH = 120
@@ -38,6 +35,8 @@ function emptyDraft() {
     imageName: '',
     existingImages: [], // 编辑时服务端已有的截图路径
     point: null, // 游戏真实坐标 { x, y }
+    // 按落点自动分类的结果（展示用）：{ label, confidence, nearestDistance, outside, source }
+    autoRegion: null,
   }
 }
 
@@ -45,19 +44,13 @@ function roundCoord(value) {
   return Number(Number(value).toFixed(3))
 }
 
-export function useQuestionEditor({ categories, regionResolver, onChanged }) {
+export function useQuestionEditor({ categories, regionInference, onChanged }) {
   const draft = reactive(emptyDraft())
   const pending = ref([])
   // 最近一次批量提交的持久记录：pending 清空后仍能看到「刚才入库了什么、哪几题失败」
   const lastSubmit = ref(null)
   const status = reactive({ kind: 'idle', message: '' })
   const submitting = ref(false)
-
-  // 落点后按区域自动判定的结果。null = 还没落点或判定不出来。
-  // autoCategoryApplied 表示这个分类确实是自动选上的（而不是用户自己选的），
-  // 界面据此决定要不要显示「已按区域自动选择」这类提示。
-  const autoCategory = ref(null)
-  const autoCategoryApplied = ref(false)
 
   const categoryOptions = computed(() => {
     const list = categories.value || []
@@ -76,45 +69,11 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     return missing
   })
 
-  // 「底图像素 + 参考区域」是给后台自查坐标链路用的，和游戏站编辑页展示同样的三项
+  // 落点对应的区域推断结果。draft.autoRegion 是点选时算好的那一份，
+  // 这里优先读它（编辑已有题目时 point 是从服务端带回来的，还没点过地图，就现算一次）。
   const draftRegion = computed(() => (
-    draft.point && regionResolver ? regionResolver(draft.point) : null
+    draft.autoRegion || (draft.point && regionInference ? regionInference.infer(draft.point) : null)
   ))
-
-  // 按区域名找对应的分类。区域分类的 label 就是区域名（米格尔区 / 薄暮区 …），
-  // 所以这里按 label 匹配，避免再维护一份「区域名 → 分类 id」的映射表（那种表一定会漂）。
-  function regionCategoryByLabel(label) {
-    if (!label) return null
-    return (categoryOptions.value || []).find(
-      (category) => category.group === REGION_GROUP && category.label === label,
-    ) || null
-  }
-
-  // 落点后自动选分类。
-  // 判定用 kNN 参考点分类（见 shared/regionClassify），置信度低或落在覆盖之外时
-  // 仍然给出建议，但把 autoCategory 标成「需复核」，让使用者一眼看到该不该改。
-  function applyAutoCategory() {
-    if (!draft.point || !regionResolver) return
-    const region = regionResolver(draft.point)
-    if (!region) return
-
-    autoCategory.value = {
-      label: region.label,
-      categoryId: regionCategoryByLabel(region.label)?.id || null,
-      reason: region.reason,
-      confidence: region.confidence,
-      nearestDistance: region.nearestDistance,
-      outsideCoverage: Boolean(region.outsideCoverage),
-      // 置信度低于这个值就提示人工复核（交界处的点投票会分散）
-      needsReview: region.reason !== 'declared'
-        && (region.confidence < 0.6 || Boolean(region.outsideCoverage)),
-    }
-
-    if (autoCategory.value.categoryId) {
-      draft.categoryId = autoCategory.value.categoryId
-      autoCategoryApplied.value = true
-    }
-  }
 
   function setStatus(kind, message) {
     status.kind = kind
@@ -123,8 +82,6 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
 
   function resetDraft() {
     Object.assign(draft, emptyDraft())
-    autoCategory.value = null
-    autoCategoryApplied.value = false
   }
 
   // 新题默认选第一个分类，省掉一次必填的下拉操作
@@ -170,9 +127,30 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
   function setPoint(point) {
     if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
     draft.point = { x: Number(point.x), y: Number(point.y) }
-    // 先按区域自动选分类，再兜底默认分类（自动判定失败时才用第一个）
-    applyAutoCategory()
-    syncDefaultCategory()
+    autoClassify()
+  }
+
+  // 按答案落点自动定区域：填「区域」文本框，并把分类切到对应的区域分类
+  // （用户之后可以手动改，改完只要不再点地图就不会被覆盖）。
+  function autoClassify() {
+    if (!draft.point || !regionInference) {
+      syncDefaultCategory()
+      return
+    }
+
+    const inferred = regionInference.infer(draft.point)
+    if (!inferred) {
+      syncDefaultCategory()
+      return
+    }
+
+    draft.autoRegion = inferred
+    draft.district = inferred.label
+
+    // 区域名 → 分类 id：分类表里的区域分类标签与区域名同名（米格尔区 / 薄暮区 …）
+    const match = categoryOptions.value.find((category) => category.label === inferred.label)
+    if (match) draft.categoryId = match.id
+    else syncDefaultCategory()
   }
 
   // 草稿 → 契约里的题目请求体。
@@ -302,6 +280,9 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
         ? { x: Number(item.x), y: Number(item.y) }
         : null,
     })
+    // 已有题目的区域以库里存的为准，但把「按坐标推断的结果」也算出来，
+    // 面板上会显示它，方便发现「这题的归属和坐标对不上」
+    if (draft.point && regionInference) draft.autoRegion = regionInference.infer(draft.point)
     setStatus('idle', `正在编辑：${item.name || item.id}`)
   }
 
@@ -345,11 +326,10 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     draftReady,
     draftMissing,
     draftRegion,
-    autoCategory,
-    autoCategoryApplied,
     setImage,
     clearImage,
     setPoint,
+    autoClassify,
     syncDefaultCategory,
     savePending,
     removePending,

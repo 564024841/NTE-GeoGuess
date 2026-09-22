@@ -1,5 +1,5 @@
 {
-  "_comment": "区域分类参考点：来自 Maa-NTE/MaaNTE-Map（AGPL-3.0）的 map-data.json 里 district 有真实区域名的点位（谕石/赠礼/异象/打卡/支线）。scripts/classify-regions.mjs 用它做 kNN 投票，不是运行时数据。",
+  "_comment": "区域分类参考点：来自 Maa-NTE/MaaNTE-Map（AGPL-3.0）的 map-data.json 里 district 有真实区域名的点位（谕石/赠礼/异象/打卡/支线），共 400 个。packages/shared/src/regionInference.js 用它做 kNN 投票（后台出题时按落点自动定区域，scripts/classify-regions.mjs 用它给整库归类）。不是运行时业务数据。",
   "_source": "https://github.com/Maa-NTE/MaaNTE-Map/blob/main/src/data/map-data.json",
   "regions": [
     "向阳岛",

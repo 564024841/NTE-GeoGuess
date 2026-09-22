@@ -8,8 +8,14 @@
 
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
 
-// 静态资源（截图、图标）走同源前缀；子路径部署时由 BASE_URL 补上。
-export const ASSET_BASE = import.meta.env.BASE_URL || '/'
+// 截图 / 图标 / 底图瓦片这些「服务端托管」的静态资源前缀。
+//
+// 必须用 API 前缀，**不能**用 Vite 的 BASE_URL：后台自己的构建产物在 /admin/ 下，
+// 但服务端的静态资源挂在站点根路径（/images/**、/icons/**、/mapsource-tiles/**）。
+// 用 BASE_URL 会拼出 /admin/images/... 这种地址，服务端找不到就落到后台的 SPA 兜底上
+// （返回 200 + HTML），浏览器解码失败 —— 表现就是「后台里图标、截图、底图全裂」。
+// 后台与 API 不同源（VITE_API_BASE）时，资源也跟着 API 走。
+export const ASSET_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
 
 // 每个请求都带超时。
 // 教训：服务端某个 preHandler 卡住时，请求会一直挂着不返回，

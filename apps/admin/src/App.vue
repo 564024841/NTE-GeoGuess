@@ -72,10 +72,10 @@ function handleCategoryCreated(category) {
     <template v-if="workspaceReady">
       <MapWorkspace
         :geometry="geometry"
-        :region-positions="regionPositions"
         :map-config="mapConfig"
         :index="index"
         :categories="categories"
+        :region-positions="regionPositions"
         :stats="stats"
         :expires-at="authState.expiresAt || ''"
         @logout="logout"

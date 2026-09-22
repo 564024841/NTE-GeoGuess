@@ -6,7 +6,8 @@
 底图、坐标系统与点位数据复用自 [Maa-NTE/MaaNTE-Map](https://github.com/Maa-NTE/MaaNTE-Map)；
 抽题、评分与题库管理由本项目实现。
 
-**这是一个可上线的服务端架构**：游戏站与后台站分开构建、后台独立部署，题库与截图由服务端存储。
+**这是一个可上线的服务端架构**：游戏站与后台站分开构建，部署时由**同一个容器（单镜像）**对外提供
+（游戏站 `/`、后台站 `/admin/`、API 与素材），题库与截图由服务端存储。
 
 ---
 
@@ -78,9 +79,10 @@ npm run tiles:verify    # 校验：z=0 的 x 目录数、抽样 7 张瓦片、�
 npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 ```
 
-生产建议设 `REQUIRE_TILES=1`：瓦片缺失或不完整时服务端拒绝启动，
+生产建议设 `REQUIRE_TILES=1`：瓦片缺失时服务端拒绝启动，
 避免「服务起来了但底图全黑」这种难排查的状态（`deploy/docker-compose.yml` 默认已开）。
-以镜像方式部署时，若不想在服务器上拉瓦片，也可以用 `--build-arg INCLUDE_TILES=1` 把瓦片打进镜像。
+镜像**不含**瓦片（避免再分发无许可证声明的底图）：容器启动自检发现瓦片目录里没有 jpg 时会自动拉一份，
+下载位置就是挂载进来的宿主目录，所以数据是持久的。
 
 ---
 
@@ -112,8 +114,7 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 
 ### 筛选（只有一层：分类）
 
-分类就是区域，取值：向阳岛、新赫兰德区、未闻浦、桥间地、米格尔区、绘空町、薄暮区。
-476 道题已按坐标全部归入这 7 个区域（「未标注」现在是 0）。
+分类就是区域，取值：向阳岛、新赫兰德区、未闻浦、桥间地、米格尔区、绘空町、薄暮区 + 「未标注」。
 
 > 早期版本还有一层按地图坐标算出的**九宫格方位分区**（北西/北中/北东/中西/中中/中东/南西/南中）。
 > 已删除：方位不是游戏里的真实区域，和区域分类是两套并行的维度，容易混淆。
@@ -126,13 +127,6 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 > **区域归属的权威来源是「区域分类」**（点位 `types` 里的 `region-*`），
 > 其次是显式的 `region` 字段，最后回退到「自建题目」。
 > 不再从 `district` 推断——那个字段有 1222 个占位值「全地图」，不适合当依据。
->
-> 区域的**几何边界在数据里并不存在**（上游也没有多边形），所以「这个点属于哪个区」
-> 只能靠已知归属的点推断：用 `packages/shared/data/region-reference.json` 里
-> 400 个带真实区域名的参考点做 kNN 反距离加权投票（`packages/shared/src/regionClassify.js`），
-> 留一法自检准确率 96.8%。地图上的区域名标记、后台出题时的自动分类、题库的批量归类，
-> 三处用的是同一套算法与参数，因此不会互相打架。
-> 离最近参考点超过 1000 标定像素的点（地图西北那块飞地）归入兜底区域「薄暮区」。
 
 > 为什么会有「未标注」：476 道可出题的截图题在原数据里的 `district` 全是占位值「全地图」，
 > 而 400 个有真实区域名的点位全都没有截图——两个集合完全不相交。
@@ -188,42 +182,92 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 
 ## 部署
 
-完整说明见 [`docs/deployment.md`](docs/deployment.md)。最短路径：
+完整说明见 [`docs/deployment.md`](docs/deployment.md)。**默认形态是单镜像**：一个容器同时提供游戏站、后台站、API 与素材，
+宝塔（或任意）nginx 只负责域名 + HTTPS 反代。镜像由 GitHub Actions 在 push 到 `main` 时自动构建并发布到 GHCR：
+`ghcr.io/564024841/nte-geoguess:latest`。最短路径：
 
 ```bash
-cp deploy/.env.example deploy/.env      # 改掉 ADMIN_PASSWORD
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+cp deploy/.env.example deploy/.env      # 至少改掉 ADMIN_PASSWORD
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
 
-| 端口 | 用途 |
-| --- | --- |
-| 8080 | 游戏站（公开） |
-| 8081 | 后台站（nginx 已按内网网段限制） |
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 默认只监听本机，交给宝塔 nginx 反代；想直接暴露就设成 `0.0.0.0:8080` |
+| `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图，务必持久化并备份 |
+| `ADMIN_PASSWORD` | 无 | 后台登录密码；留空则后台接口禁用 |
 
-数据（SQLite + 上传截图）在 `nte-geoguess-data` 卷里；底图瓦片从宿主目录挂载。
+底图瓦片**不在镜像里**（镜像保持精简、也不涉及再分发底图），必须从宿主目录挂载：
+
+```bash
+npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
+# 然后在 deploy/.env 里设 TILES_HOST_DIR=<该目录>
+```
+
+以后更新瓦片，**直接往这个宿主目录里覆盖文件即可**——服务端按请求读盘，上传完立即生效，
+不需要重建镜像、也不需要重启容器（想验证可以 `docker compose restart app` 看启动自检日志）。
+
+同理，**题库快照、坐标标定、区域落点**这些内容数据也不在 git 上维护：
+仓库里的 `packages/shared/data/*.json` 只是骨架，生产把它们放到宿主目录里挂进容器
+`/srv/data-json`（compose 默认已配好 `SHARED_DATA_HOST_DIR`），改文件即生效
+（其中题库快照需要 `FORCE_SEED=1` 重启一次让它重新导入）。
+
+想交给宝塔的「Docker → Compose 项目」管理时，它的两个输入框分别粘
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml)（Compose 框）和
+[`deploy/.env.example`](deploy/.env.example)（env 框，三个宿主目录写绝对路径，
+指向 `/www/server/panel/data/compose/nte-geoguess/`）；只想粘一个文件就用
+[`deploy/docker-compose.standalone.yml`](deploy/docker-compose.standalone.yml)（变量全部内联）。
+细节见 [`docs/deployment.md`](docs/deployment.md) 的「宝塔面板：用 Compose 项目部署」。
+
+容器启动时会先自检：**瓦片目录里没有 jpg、或内容数据 JSON 不存在，就自动下载补全**
+（`TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH`，默认开；可用 `=0` 关闭成"缺了就报错"）。
+补全只写进挂载的宿主目录；**目录不可写或下载失败 = 直接退出并说明原因**，
+没有"退到 `/tmp`"或"用镜像里那份旧骨架"的静默兜底。
+
+更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
+compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
+它会自动拉新镜像并重启，无需手工干预。
+
+> **宝塔部署要点**（都是踩过的坑）：
+> 1. 宝塔全局 nginx 开着 `proxy_cache cache_one`，重新构建后会命中旧首页 HTML、表现为「页面空白」——
+>    **该站点要加 `proxy_cache off;`**。
+> 2. 用宝塔「Node 项目（默认项目）」原生部署时它**不注入环境变量**（前置只导出 PATH，启动命令也不能写
+>    `VAR=value` 前缀），所以变量要放仓库根的 `.env`，由 `server/src/config.js` 的 `process.loadEnvFile()` 读取；
+>    用 Docker 部署没有这个问题，变量都在 compose 里。
+> 3. `better-sqlite3` 在 Node 24 上没有预编译包，原生部署请用 **Node 22**（镜像里已是 Node 22）。
+> 4. `/admin/` 建议加访问限制（Basic Auth / IP 白名单 / VPN）；HTTPS 环境下设 `COOKIE_SECURE=true`。
 
 ---
 
 ## 数据说明与已知限制
 
-1. **内置题源 476 道，分布在「未标注」（472）与「薄暮区」（4）。**
+1. **内置题源 476 道；区域归属是「按坐标算出来」的，仓库里的骨架仍是未标注。**
    原始数据 1622 个点位里有 1222 个的 `district` 是占位值「全地图」，
    而 476 道有截图的题全部落在这一批里；400 个有真实区域名的点位则都没有截图
-   （它们是谕石之类的纯地图标记）。
-   经过三次数据整理，现在是 **476 个点位 / 476 道可出题 / 8 个分类**：
-   无截图、出不了题的点位已全部删除，其中 6 个区域分类（向阳岛、新赫兰德区、
-   未闻浦、桥间地、米格尔区、绘空町）因此变成空分类——分类保留，
-   之后在后台上传对应区域的截图即可补题。
+   （它们是谕石之类的纯地图标记）。无截图、出不了题的点位已全部删除，
+   现在是 **476 个点位 / 476 道可出题 / 8 个分类**。
+   所以「按区域出题」得先归类：`npm run classify:regions` 用
+   `packages/shared/data/region-reference.json` 里那 400 个参照点做 kNN 投票（参考点留一法自检 96.8%），
+   把 476 道题落到 向阳岛 25 / 新赫兰德区 120 / 未闻浦 15 / 桥间地 66 / 米格尔区 124 /
+   绘空町 121 / 薄暮区 5。这个结果**只写进部署侧的数据**（`data-json/map-data.json` + SQLite），
+   仓库里的 `map-data.json` 保持「最基本的骨架」，需要时用脚本重新生成。
 
 2. **数据整理有可复现的脚本，都是「不加参数即演练、加 `--apply` 才执行」，幂等。**
    - `npm run migrate:regions`：按区域名重建分类、删除既无区域名又无截图的占位点位。
    - `npm run add:region-twilight`：新增「薄暮区」分类，并把落在已知区域范围之外的
      未标注点位改归该区。
+   - `npm run classify:regions`：按坐标把题归到区域（kNN + 覆盖范围规则），参考点在
+     `packages/shared/data/region-reference.json`（来自 MaaNTE-Map），推断规则在
+     `packages/shared/src/regionInference.js` —— 后台出题时的自动归类用的是同一份实现。
+     加 `--cv` 会打印参照点留一法自检准确率；执行时会备份、写盘并同步数据库。
+   - `scripts/classify-regions.py`：同一件事的 **Python 存档版**（线上那次归类就是它跑的），
+     读同一份参照点、同样的参数，产物与 mjs 版逐字节一致。规则只有 `regionInference.js` 一处，
+     这个文件留作留痕/对照，别只改它。
    - `npm run remove:imageless`：删除所有无截图点位（出不了题的地图标记）。
-   - `npm run classify:regions`：按坐标把题目归到区域分类（kNN 参考点投票，留一法 96.8%）。
-   前两个执行前自动备份到 `data/backups/`；第三个按使用者要求不做自动备份，
-   但会把它删掉的点位完整写进 `data/removed-imageless-*.json` 以便恢复。
-   三者都不影响后台上传的自建题。
+   除 `remove:imageless` 外都会先备份到 `data/backups/`；`remove:imageless` 按使用者要求
+   不做自动备份，但会把删掉的点位完整写进 `data/removed-imageless-*.json` 以便恢复。
+   这些脚本都不影响后台上传的自建题。
 
 3. **运行数据默认在仓库根的 `data/`。**
    SQLite 与后台上传的截图都在那里，已被 `.gitignore` 排除。

@@ -1,4 +1,4 @@
-name: Publish Docker images
+name: Publish Docker image (single image)
 
 on:
   push:
@@ -19,16 +19,6 @@ concurrency:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: server
-            dockerfile: deploy/Dockerfile
-            suffix: -server
-          - target: web
-            dockerfile: deploy/Dockerfile.web
-            suffix: -web
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,7 +34,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute image name
-        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}${{ matrix.suffix }}" >> "$GITHUB_ENV"
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Extract metadata
         id: meta
@@ -61,9 +51,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: deploy/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+          cache-from: type=gha,scope=single-image
+          cache-to: type=gha,mode=max,scope=single-image

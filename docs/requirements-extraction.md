@@ -151,6 +151,10 @@ L.tileLayer(url, {
 ### 2.5 其他值得照搬的小件
 
 - `src/utils/assets.js` 的 `publicAssetUrl()`：给 public 资源补 Vite base，兼容子路径部署
+  （**本项目后来删掉了这个函数**：它会把服务端托管在根路径的 `/images/**`、`/icons/**`、
+  `/mapsource-tiles/**` 也拼成 `/admin/...`，在子路径部署的后台里表现为图标、截图、底图全裂，
+  因为服务端找不到这些路径就会返回 SPA 兜底页，浏览器拿到的是 HTML。参见 `apps/admin/src/api.js`
+  的 `ASSET_BASE`）
 - `src/utils/storage.js`：localStorage 读取统一 try/catch 降级，坏数据不让应用启动失败
 - `src/constants/mapApp.js`：把缩放默认值、storage key 集中管理
 - 「点位标记用 `L.divIcon` + HTML/CSS」而不是图片图标（`markerHtml` / `createIcon`）

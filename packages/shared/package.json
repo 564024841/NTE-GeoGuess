@@ -18,7 +18,7 @@
     "./constants": "./dist/constants.js",
     "./format": "./dist/format.js",
     "./regionPositions": "./dist/regionPositions.js",
-    "./regionClassify": "./dist/regionClassify.js",
+    "./regionInference": "./dist/regionInference.js",
     "./images": "./dist/images.js",
     "./imageRegistry": "./dist/imageRegistry.js",
     "./data/map-data.json": "./data/map-data.json",

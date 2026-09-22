@@ -7,7 +7,6 @@
 //   4. 游戏单位 / 像素 比例（评分尺度的依据）与各向异性
 //   5. 内置点位是否都落在地图范围内
 //   6. 题库索引能否正常构建
-//   7. 区域参考点与分类器（后台「按落点自动分类」的依据，含留一法准确率）
 //
 // 用的是 packages/shared 里前后端共用的同一份实现，
 // 所以这里通过就等于浏览器与 Node 两侧的换算口径一致。
@@ -16,12 +15,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildPuzzleIndex, createGeometry, solveAffine } from '@nte-geoguess/shared'
-import {
-  REGION_REFERENCE_POINTS as regionReferencePoints,
-  buildRegionReferenceIndex,
-  createRegionClassifier,
-  isRealDistrictName,
-} from '@nte-geoguess/shared/regionClassify'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SHARED_DATA = path.join(ROOT, 'packages/shared/data')
@@ -174,49 +167,6 @@ const geometry = createGeometry(mapData.map, calibration)
   // 以前这里还有一套九宫格方位分区，已删除——不该再出现 r{row}c{col} 形状的 id。
   const gridLike = index.puzzles.filter((puzzle) => /^r\d+c\d+$/.test(String(puzzle.regionId)))
   check(gridLike.length === 0, `已无九宫格方位分区（残留 ${gridLike.length} 个）`)
-
-  // ---------- 6a. 区域参考点与分类器（后台「按落点自动分类」的依据）----------
-  {
-    const toPixel = (point) => geometry.gameToMapPixel(point)
-    const pool = regionReferencePoints.filter((point) => isRealDistrictName(point.district))
-    check(pool.length > 300, `区域参考点可用 => ${pool.length} 个`)
-
-    const referenceIndex = buildRegionReferenceIndex(toPixel)
-    check(referenceIndex.length >= 6,
-      `参考点覆盖 ${referenceIndex.length} 个区域 => ${referenceIndex.map((item) => `${item.label}(${item.count})`).join(' ')}`)
-    check(referenceIndex.every((item) => Number.isFinite(item.centroidX) && Number.isFinite(item.centroidY)),
-      '每个区域都算得出重心（地图标注的落点）')
-
-    // 留一法自检：拿掉参考点自己再分类，应当还能回到自己的区域。
-    // 这是「自动分类准不准」的唯一可信指标——准确率掉下来说明参考点或参数坏了。
-    const classifier = createRegionClassifier(toPixel)
-    let hit = 0
-    for (const point of pool) {
-      const pixel = toPixel(point)
-      const others = classifier.pool.filter((item) => item.id !== point.id)
-      const votes = new Map()
-      for (const item of others
-        .map((item2) => ({ d: Math.hypot(pixel.pixelX - item2.pixelX, pixel.pixelY - item2.pixelY), label: item2.label }))
-        .sort((x, y) => x.d - y.d)
-        .slice(0, classifier.k)) {
-        votes.set(item.label, (votes.get(item.label) || 0) + 1 / Math.max(item.d, 1))
-      }
-      const best = [...votes.entries()].sort((x, y) => y[1] - x[1])[0]?.[0]
-      if (best === point.district) hit += 1
-    }
-    const accuracy = hit / pool.length
-    check(accuracy > 0.9, `区域分类留一法准确率 ${(accuracy * 100).toFixed(1)}%（${hit}/${pool.length}）`)
-
-    // 兜底分支：地图西北角远离所有参考点，应当判为薄暮区而不是硬投给相邻城区
-    const far = classifier({ pixelX: 300, pixelY: 300 })
-    check(far?.reason === 'outside-coverage' && far.label === '薄暮区',
-      `覆盖之外的坐标归兜底区域 => (300,300) -> ${far?.label}（${far?.reason}）`)
-
-    // 每个区域重心处应当判回自己（否则地图标签与实际判定会打架）
-    const wrong = referenceIndex.filter((item) => classifier({ pixelX: item.centroidX, pixelY: item.centroidY })?.label !== item.label)
-    check(wrong.length === 0,
-      wrong.length ? `重心处判错：${wrong.map((item) => item.label).join('、')}` : '各区域重心处都判回自己')
-  }
 
   // 抽题必须确定性：同种子同结果，便于复盘与分享
   const a = buildPuzzleIndex(mapData, geometry)

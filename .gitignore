@@ -22,7 +22,12 @@ output/
 !packages/shared/data/*.json
 
 # 部署时从模板复制出来的环境文件（含密码，不要提交）
+.env
 deploy/.env
+
+# 本机构建缓存与 macOS 杂项
+.npm-cache/
+.DS_Store
 
 # 底图瓦片仓库（单独克隆，不进本仓库）
 MapSource/

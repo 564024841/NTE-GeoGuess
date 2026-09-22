@@ -40,14 +40,20 @@ function calibration() {
   return cachedCalibration
 }
 
-// 区域名标签的落点。
-// 读不到时返回空数组而不是报错：前端会回退到构建时内联的那份
-// （packages/shared/data/region-positions.json），地图上照常显示区域名。
-// 这样运维可以直接挂一个文件覆盖它（REGION_POSITIONS_FILE），不必重新构建前端。
+// 区域名标签的落点：优先用运行时可挂载的文件；读不到就返回空数组，
+// 前端会回退到构建时内联的那份（packages/shared/data/region-positions.json）。
 function regionPositions() {
   try {
-    const parsed = readJsonFile(config.regionPositionsFile, '区域落点文件')
-    return Array.isArray(parsed?.regions) ? parsed.regions : []
+    const file = readJsonFile(config.regionPositionsFile, '区域位置文件')
+    // 文件结构是 { version, source, regions: [{ id, label, x, y }] }，
+    // 下发给前端的是 regions 数组（两个前端都按数组消费）。
+    const regions = Array.isArray(file?.regions) ? file.regions : []
+    return regions.filter((region) => (
+      region
+      && region.label
+      && Number.isFinite(Number(region.x))
+      && Number.isFinite(Number(region.y))
+    ))
   } catch {
     return []
   }
@@ -107,7 +113,6 @@ export function registerPublicRoutes(app) {
     const payload = {
       map: mapConfig(),
       calibration: calibration(),
-      // 区域名标签的落点；运维可用 REGION_POSITIONS_FILE 覆盖而无需重建前端
       regionPositions: regionPositions(),
       categories: listCategories(),
       locations,

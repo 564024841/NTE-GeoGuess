@@ -16,7 +16,7 @@ import { useMap } from '../composables/useMap'
 import { useNotices } from '../composables/useNotices'
 import { useQuestionEditor } from '../composables/useQuestionEditor'
 import { useQuestionList } from '../composables/useQuestionList'
-import { createRegionResolver, regionLabelPoints as regionLabelPointsFor } from '../utils/region'
+import { createRegionInference } from '@nte-geoguess/shared/regionInference'
 import MapHud from './MapHud.vue'
 import QuestionEditorPanel from './QuestionEditorPanel.vue'
 import QuestionListPanel from './QuestionListPanel.vue'
@@ -24,12 +24,11 @@ import CategoryPanel from './CategoryPanel.vue'
 
 const props = defineProps({
   geometry: { type: Object, required: true },
-  // 区域落点（来自 bootstrap；薄暮区靠它补上，因为它没有参考点）
-  regionPositions: { type: Array, default: () => [] },
   mapConfig: { type: Object, required: true },
   index: { type: Object, required: true },
   categories: { type: Array, default: () => [] },
   stats: { type: Object, default: null },
+  regionPositions: { type: Array, default: () => [] },
   expiresAt: { type: String, default: '' },
 })
 
@@ -40,22 +39,23 @@ const { ask } = useConfirm()
 
 const tab = ref('editor')
 
-// 游戏坐标 → 标定像素 → 区域。判据是 400 个带真实区域名的参考点做 kNN 投票
-// （见 shared/regionClassify 与 utils/region 的说明）。
-const regionResolver = createRegionResolver(props.geometry)
+// 按坐标推断区域：规则与 scripts/classify-regions.mjs 完全同一份实现
+// （packages/shared/src/regionInference.js），所以后台出题时的自动归类与整库归类不会漂。
 const toPixel = (point) => props.geometry.gameToMapPixel(point)
-const regionOf = (point, location = null) => (point ? regionResolver(point, location) : null)
-
-// 地图上的区域名标记：6 个城区的落点由参考点重心算出，
-// 薄暮区没有参考点（它是「覆盖之外」的兜底区域），用数据文件里的落点补上
-const regionLabelPoints = computed(() => regionLabelPointsFor(props.geometry, props.regionPositions || []))
-const showRegionLabels = ref(true)
+const regionInference = createRegionInference({ geometry: props.geometry })
+const inferRegion = (point) => (point ? regionInference.infer(point) : null)
+// 区域名 → 主题色（分类表里就带着色），给地图上的区域标记上色
+const regionColors = computed(() => Object.fromEntries(
+  (props.categories || [])
+    .filter((category) => category.label && category.color)
+    .map((category) => [category.label, category.color]),
+))
 
 const categoriesRef = computed(() => props.categories)
 
 const editor = useQuestionEditor({
   categories: categoriesRef,
-  regionResolver: regionOf,
+  regionInference,
   onChanged: handleQuestionsChanged,
 })
 
@@ -79,8 +79,6 @@ const {
   cancelEdit,
   saveEdit,
   syncDefaultCategory,
-  autoCategory,
-  autoCategoryApplied,
 } = editor
 
 const list = useQuestionList()
@@ -118,15 +116,10 @@ const { mapElement, zoom, cursors, focusPoint, shiftZoom, resetView } = useMap({
   geometry: props.geometry,
   mapConfig: props.mapConfig,
   pinPoint,
-  regionPoints: regionLabelPoints,
-  showRegionLabels,
+  regionPositions: computed(() => props.regionPositions),
+  regionColors,
   onMapClick: handleMapClick,
 })
-
-// 手动改了分类：撤销「已按区域自动选择」的标记，免得界面还宣称是自动选的
-function handleCategoryChanged() {
-  autoCategoryApplied.value = false
-}
 
 function handleMapClick(point) {
   // 只有出题/改题时才把点击当作答案位置；其它页面点地图不该悄悄改草稿
@@ -200,7 +193,7 @@ onMounted(async () => {
       getList: () => list.items.value.map((item) => ({ id: item.id, name: item.name, x: item.x, y: item.y })),
       getListTotal: () => list.total.value,
       getCategories: () => categoryItems.value.map((item) => ({ id: item.id, label: item.label, count: item.count })),
-      regionOf,
+      inferRegion,
       toPixel,
       // 本次运行生效的请求超时，自查脚本据此决定等多久（见 scripts/selfcheck.mjs）
       apiTimeoutMs: DEFAULT_TIMEOUT_MS,
@@ -298,11 +291,8 @@ const questionTotalLabel = computed(() => {
         :draft-ready="draftReady"
         :draft-missing="draftMissing"
         :category-options="categoryOptions"
-        :auto-category="autoCategory"
-        :auto-category-applied="autoCategoryApplied"
-        :show-region-labels="showRegionLabels"
         :to-pixel="toPixel"
-        :region-of="regionOf"
+        :infer-region="inferRegion"
         @upload="setImage"
         @clear-image="clearImage"
         @save="savePending"
@@ -312,8 +302,6 @@ const questionTotalLabel = computed(() => {
         @clear-pending="clearPending"
         @submit="submitBatch"
         @focus="handleFocus"
-        @category-changed="handleCategoryChanged"
-        @toggle-region-labels="(value) => (showRegionLabels = value)"
       />
 
       <QuestionListPanel

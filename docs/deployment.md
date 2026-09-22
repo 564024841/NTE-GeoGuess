@@ -1,131 +1,232 @@
 # 部署指南
 
-目标形态：一台 Linux 云服务器上跑两个容器 —— 服务端（Fastify + SQLite）与
-nginx（托管游戏站、后台站并反代 API）。底图瓦片由服务端或 nginx 直接读盘。
+目标形态：**一个容器**同时提供游戏站（`/`）、后台站（`/admin/`）、API 与素材，
+外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片**不在镜像里**，从宿主目录挂载。
 
 ```
-浏览器 ──▶ nginx:8080（游戏站，公开）──┐
-          nginx:8081（后台站，内网）  ├─▶ /api /images /icons /mapsource-tiles ─▶ server:8787
-                                      ┘                                              │
-                                                                              /data（SQLite + 上传截图）
-                                                                              /srv/tiles（本地瓦片）
+浏览器 ──▶ nginx（域名 + HTTPS，站点内 proxy_cache off）
+             └─▶ 127.0.0.1:8787 ──▶ 容器 nte-geoguess
+                                       ├─ /              游戏站（STATIC_DIR）
+                                       ├─ /admin/         后台站（ADMIN_STATIC_DIR）
+                                       ├─ /api /images /icons
+                                       └─ /mapsource-tiles ──▶ /srv/tiles（宿主目录挂载）
+                                    数据：/data（宿主目录挂载：SQLite + 上传截图）
 ```
+
+镜像由 GitHub Actions 在 push 到 `main`（或打 `v*` 标签）时构建并发布：
+
+```
+ghcr.io/564024841/nte-geoguess:latest
+```
+
+镜像基于 **Alpine**（`node:22-alpine`，musl）：运行阶段只有 `ca-certificates`、`curl`、`tini`、
+`libstdc++` 这几个包，体积比 Debian 版小一截。代价是 `better-sqlite3` 没有 musl 预编译包，
+构建时要在 Alpine 里从源码编译（`deploy/Dockerfile` 构建阶段已装好 `python3 make g++`），
+自己改 Dockerfile 时别把那步删掉。
+
+> 旧版本曾是「server + web 两个镜像、对外 8080/8081 两个端口」，**现已废弃**，
+> 请使用下面的单镜像方式。
+
+---
 
 ## 瓦片是本地化的，只在部署时联网
 
-这点先讲清楚，因为它决定了「地图会不会因为网络波动打不开」：
-
 | 阶段 | 是否需要外网 | 说明 |
 | --- | --- | --- |
-| **部署时（一次性）** | 需要 | 从 GitHub 拉一次瓦片（30MB），或者从内网机器拷过来 |
+| **部署时（一次性）** | 需要 | 从 GitHub 拉一次瓦片（约 30MB），或从内网机器拷过来 |
 | **运行时（每次访问）** | **不需要** | 服务端只从 `TILES_DIR` 读磁盘上的 jpg，代码里没有任何远程回退 |
 
-也就是说，地图加载速度取决于服务器磁盘与网络出口，与 GitHub 无关。
-（早期版本的 `map-data.json` 里留着一个 `raw.githubusercontent.com` 的瓦片模板字段，
-但它**不参与运行**：服务端下发给前端的是本地路径 `/mapsource-tiles/{z}/{x}/{y}.jpg`。）
+```bash
+cd NTE-GeoGuess
+npm run tiles:fetch     # 浅克隆 + 稀疏检出，只取 tiles/；失败可重跑（git 续传）
+npm run tiles:verify    # 校验：z=0 的 x 目录数（应为 51）、抽样 7 张、总数与体积
+```
+
+默认拉到「仓库同级的 `MapSource/tiles`」。网络不稳或内网隔离时，可以在别的机器上拉好后整目录拷过来：
+
+```bash
+npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
+```
+
+生产建议设 `REQUIRE_TILES=1`（compose 默认已开）：瓦片缺失或不完整时服务端**拒绝启动**，
+避免「服务起来了但底图全黑」这种难排查的状态。
+
+### 瓦片：不在镜像里，从宿主目录挂载
+
+镜像**不含瓦片**（保持精简，也避免再分发没有许可证声明的游戏底图）。
+部署前先把瓦片放到宿主目录，再挂进容器 `/srv/tiles`：
+
+```bash
+npm run tiles:fetch          # 拉到仓库同级的 MapSource/tiles（约 30MB / 3516 张）
+npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、抽样 7 张）
+```
+
+`deploy/.env` 里设 `TILES_HOST_DIR=<瓦片目录>`；compose 里对应这一行：
+
+```yaml
+      - "${TILES_HOST_DIR:-./tiles}:/srv/tiles"
+```
+
+宿主目录**必须可写**（而且不要挂成 `:ro`）：瓦片缺失时容器启动自检要往里下载补全。
+
+**更新瓦片**：直接往这个宿主目录里覆盖 `{z}/{x}/{y}.jpg` 即可——服务端按请求读盘，
+上传完立即生效，不用重建镜像、也不用重启容器（想复查就 `docker compose restart app`，
+启动时会抽样自检瓦片并打印结论）。
+
+`REQUIRE_TILES=1`（compose 默认）时，宿主瓦片目录为空或不完整会让服务端**拒绝启动**，
+避免出现"服务起来了但底图全黑"。临时调试可以先设 `REQUIRE_TILES=0`。
+
+### 内容数据（题库 / 坐标标定 / 区域落点）也不走 git
+
+仓库里的 `packages/shared/data/*.json` 只是**最基本的骨架**，真正的数据放在宿主机上，
+由 compose 挂进容器 `/srv/data-json`，并用环境变量指路：
+
+| 文件 | 容器内路径 | 环境变量 | 作用 |
+| --- | --- | --- | --- |
+| `map-data.json` | `/srv/data-json/map-data.json` | `SEED_DATA_FILE` | 内置题库快照（点位/题目/分类），首次启动 seed 导入 SQLite |
+| `navi-coordinate-calibration.json` | `/srv/data-json/navi-coordinate-calibration.json` | `CALIBRATION_FILE` | 坐标标定，`/api/bootstrap` 下发给前端做地图↔游戏坐标换算 |
+| `region-positions.json` | `/srv/data-json/region-positions.json` | `REGION_POSITIONS_FILE` | 地图上区域名标签的落点 |
+
+```yaml
+    volumes:
+      - "${SHARED_DATA_HOST_DIR:-./data-json}:/srv/data-json"
+```
+
+这个目录同样要**可写**（不要 `:ro`）：文件缺失时容器启动自检会从仓库 raw 下载一份补进来，
+并一直留在宿主目录里（下次不会重复下载）。
+
+**更新这些数据**：直接覆盖宿主目录里的文件。
+题库快照（`map-data.json`）改了之后需要让它重新导入（seed 只在 `meta.seed_version` 不匹配时跑）：
+临时加 `FORCE_SEED=1` 重启一次，或删掉 `DATA_DIR` 下那个 SQLite 再重启；
+标定与区域落点则是**下个请求即生效**（服务端运行时读取）。
 
 ---
 
-## 1. 准备瓦片（一次性）
+## 宝塔面板：用 Compose 项目部署
 
-瓦片在独立仓库 `Maa-NTE/MapSource`，不在本项目里。用仓库自带的脚本拉取与校验：
+宝塔的「Docker → Compose 项目 → 添加」有两个输入框：**Compose** 和 **env**。
+
+| 输入框 | 粘什么 |
+| --- | --- |
+| Compose | [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) 的全部内容 |
+| env | [`deploy/.env.example`](../deploy/.env.example) 的全部内容（至少改 `ADMIN_PASSWORD`，三个宿主目录写绝对路径） |
+
+env 框里只提供 compose 里 `${...}` 的取值，**不会进容器**（进容器的是 compose 里 `environment:`
+那段）。所以镜像固定、数据路径固定，只有密码/端口/宿主目录需要你改。
+
+只想粘一个文件、不想管 env 时，用
+[`deploy/docker-compose.standalone.yml`](../deploy/docker-compose.standalone.yml)
+（环境变量全部内联写死），贴进 Compose 框即可。
+
+### 目录是怎么绑定的
+
+宝塔会把 compose 项目建在 `/www/server/panel/data/compose/<项目名>/`，
+**compose 里的相对路径就是相对这个项目目录解析的**（宝塔自己的 Compose 项目都这么用，
+例如 Forgejo 的 `./forgejo:/data` 实际就是 `/www/server/panel/data/compose/Forgejo/forgejo`）。
+
+本次部署用的是**绝对路径**（写死在 env 框里），指向宝塔给这个项目建的那个目录 ——
+这样项目目录之外的地方不会莫名多出数据目录：
+
+```dotenv
+DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data
+TILES_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/tiles
+SHARED_DATA_HOST_DIR=/www/server/panel/data/compose/nte-geoguess/data-json
+```
+
+如果宝塔里项目名不叫 `nte-geoguess`，把三行里的目录名一起换掉；也可以用相对路径
+`./data`、`./tiles`、`./data-json`（效果一样，就是依赖"项目目录"这个前提）。
+
+也就是要在项目目录里准备好：
+
+| 目录 | 内容 | 权限 |
+| --- | --- | --- |
+| `data/` | SQLite + 后台上传截图 | 容器以 uid 1000 写入：`chown -R 1000:1000 data` |
+| `tiles/` | 完整底图瓦片（`z=-6..0` 的 `{z}/{x}/{y}.jpg`） | **容器要写**（缺瓦片时自动下载补全）：`chown -R 1000:1000 tiles` |
+| `data-json/` | `map-data.json`、`navi-coordinate-calibration.json`、`region-positions.json` | **容器要写**（缺文件时自动下载补全并保留）：`chown -R 1000:1000 data-json` |
+
+三个目录一次性给对属主，之后都不用再管：
 
 ```bash
-cd NTE-GeoGuess
-npm run tiles:fetch          # 浅克隆 + 稀疏检出，只取 tiles/，失败可重跑（git 会续传）
-npm run tiles:verify         # 校验完整性
+cd /www/server/panel/data/compose/nte-geoguess
+sudo chown -R 1000:1000 data tiles data-json
 ```
 
-`tiles:verify` 会检查 z=0 的 x 目录数是否与地图尺寸吻合（应为 51 个）、
-抽样四角与中心共 7 张瓦片是否存在且未损坏，并报告总数与体积。
-正常输出：
+> 如果你更习惯把数据放在 `/www/wwwroot/nte-geoguess/` 下（不和宝塔自己的数据区混在一起），
+> 把上面三个 `*_HOST_DIR` 换成那边的绝对路径即可，例如
+> `DATA_HOST_DIR=/www/wwwroot/nte-geoguess/data`（tiles、data-json 同理）。
+> **不要**把这些目录放到 `/www/server/panel/data` 里手工 chmod/chown ——
+> 那是宝塔自己的数据区（`600 root`），权限被改坏会连带多个服务起不来。
 
-```
-=== 瓦片校验：/path/MapSource/tiles
-  z=0 的 x 目录    51 个（0–50）
-  瓦片总数        3516 张 / 29.8 MB
-  抽样通过        7 张
-  结论            完整可用
-```
+### 更新流程（都不需要重建镜像）
 
-默认拉到「仓库同级的 `MapSource/tiles`」，compose 的 `TILES_HOST_DIR` 默认就指那里。
-想放别处：
+| 改什么 | 怎么做 | 生效方式 |
+| --- | --- | --- |
+| 主程序 | `git push` → Actions 出镜像 | watchtower 自动拉取，或 `docker compose pull && up -d` |
+| 底图瓦片 | 往 `tiles/` 覆盖文件 | 下个请求即生效 |
+| 坐标标定 / 区域落点 | 覆盖 `data-json/` 里的文件 | 下个请求即生效 |
+| 题库快照 | 覆盖 `data-json/map-data.json` | 加 `FORCE_SEED=1` 重启一次（或删 `data/` 里的 SQLite 重启）后导入 |
 
-```bash
-TILES_DIR=/srv/nte-tiles npm run tiles:fetch
-# 然后在 deploy/.env 里设 TILES_HOST_DIR=/srv/nte-tiles
-```
+### 启动自检与自动补全
 
-### 网络不稳 / 内网隔离时的三种办法
+容器入口（`deploy/docker-entrypoint.sh`）在启动服务前会自检一次，**缺什么补什么**：
 
-1. **重跑**：`tiles:fetch` 是幂等的，git 会续上已下载的对象。也可以先只克隆再单独检出：
-   ```bash
-   git clone --depth 1 --filter=blob:none --no-checkout https://github.com/Maa-NTE/MapSource.git
-   cd MapSource && git sparse-checkout init --cone && git sparse-checkout set tiles && git checkout main
-   ```
-2. **从已有瓦片的机器拷过来**（推荐给完全内网的环境，30MB 用 U 盘/内网 scp 都行）：
-   ```bash
-   # 在已拉好瓦片的机器上验证并复制
-   npm run tiles:mirror -- /path/to/MapSource/tiles --dest /srv/nte-tiles
-   # 或者直接 scp -r
-   ```
-3. **指向自己的镜像仓库**：
-   ```bash
-   MAPSOURCE_REPO=git@内网git:mirror/MapSource.git npm run tiles:fetch
-   ```
+| 检查项 | 缺失时的行为 | 相关变量 |
+| --- | --- | --- |
+| 底图瓦片（`$TILES_DIR` 里有没有 `*.jpg`） | **先探 `$TILES_DIR` 可不可写**：可写才把 `codeload.github.com/<MAPSOURCE_REPO>` 的 tar.gz 解到 `$TILES_DIR` 下的隐藏暂存目录、再复制到位；不可写或下载失败 → **直接报错退出**（不会白下载几十 MB） | `TILES_AUTO_FETCH`（默认 `1`）、`MAPSOURCE_REPO`、`MAPSOURCE_BRANCH` |
+| 题库快照 / 坐标标定 / 区域落点 | 缺哪个就下载到**它所在的挂载目录**（持久化）：先试 `raw.githubusercontent.com`，再试 `cdn.jsdelivr.net` 镜像；目录不可写、两个源都失败 → **直接报错退出** | `DATA_JSON_AUTO_FETCH`（默认 `1`）、`GIT_REPO`、`GIT_BRANCH` |
 
-### 让服务器在瓦片有问题时拒绝启动
+要点：
 
-服务端启动时会抽样自检瓦片（目录结构 + 四角/中心/低分辨率层共 7 张）。
-默认只是告警；**生产建议打开 `REQUIRE_TILES=1`**（compose 里已默认打开），
-这样瓦片缺失或不完整时服务端直接退出，而不是「服务起来了但底图全黑」这种难排查的状态。
-
-```bash
-# deploy/.env
-REQUIRE_TILES=1
-```
-
-`TILES_HOST_DIR` 指向一个不存在的目录时，Docker 会替你建一个空目录，
-服务端会报「z=0 下没有任何 x 目录（目录是空的）」——这正是这个检查要拦的情况。
+- 已经放好文件的挂载目录**优先级最高**，自检不会覆盖你的数据。
+- 自动下载需要**写入权限**：`data/`、`tiles/`、`data-json/` 都按可写准备（`chown -R 1000:1000`，且**不要加 `:ro`**）。
+  目录不可写时脚本会**先探测、直接退出并说明原因**，不会反复下载同一个 30MB 包。
+- 不想让容器联网拉数据时，把 `TILES_AUTO_FETCH` / `DATA_JSON_AUTO_FETCH` 设成 `0`，
+  自己把 `tiles/`、`data-json/` 准备好即可；此时文件缺失会**直接报错退出**，不会静默降级。
+- 所有下载都只写进挂载目录（`/srv/tiles`、`/srv/data-json`），**不会回退到 `/tmp`、也不会回退到
+  镜像里那份骨架** —— 宁可启动失败并打印原因，也不要起一个数据不对的服务。
+- 已经有文件时自检只打印"就绪"，不会重新下载。上次被强杀留下的隐藏暂存目录，下次启动会先清掉。
 
 ---
 
-## 2. 用 Docker Compose 启动（推荐）
+---
+
+## 方式一：Docker Compose（推荐）
 
 ```bash
-cd NTE-GeoGuess
+# 1) 拉代码（瓦片默认放在仓库同级的 MapSource/tiles）
+git clone https://github.com/564024841/NTE-GeoGuess.git /www/wwwroot/nte-geoguess/app
+cd /www/wwwroot/nte-geoguess/app
+
+# 2) 准备环境文件（至少改 ADMIN_PASSWORD 和 TILES_HOST_DIR）
 cp deploy/.env.example deploy/.env
-# 编辑 deploy/.env，至少改掉 ADMIN_PASSWORD，并确认 TILES_HOST_DIR 指向瓦片目录
-# 私有镜像需先登录 GHCR（PAT 至少需要 read:packages）
-echo "$GHCR_TOKEN" | docker login ghcr.io -u <github-username> --password-stdin
+
+# 3) 数据目录要能被容器内的 node 用户（uid 1000）写入
+sudo mkdir -p /www/wwwroot/nte-geoguess/data
+sudo chown -R 1000:1000 /www/wwwroot/nte-geoguess/data
+
+# 4) 拉镜像并启动
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+# 5) 自检
+curl -s http://127.0.0.1:8787/api/health
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f --tail=50
 ```
 
-`deploy/docker-compose.yml` 默认拉取：
+`deploy/.env` 里最常用的几个：
 
-- `ghcr.io/564024841/nte-geoguess-server:${IMAGE_TAG:-latest}`
-- `ghcr.io/564024841/nte-geoguess-web:${IMAGE_TAG:-latest}`
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | 无（必填） | 后台登录密码；留空则后台接口禁用 |
+| `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 只监听本机交给 nginx 反代；想直接暴露就设 `0.0.0.0:8080` |
+| `DATA_HOST_DIR` | `./data` | SQLite + 上传截图，务必持久化并备份 |
+| `TILES_HOST_DIR` | `./tiles` | 底图瓦片目录（镜像不含瓦片，必须挂载，且容器要能写） |
+| `SHARED_DATA_HOST_DIR` | `./data-json` | 题库快照 / 坐标标定 / 区域落点所在目录，同样要能写 |
+| `COOKIE_SECURE` | `true` | 走 HTTPS 保持 `true`；纯 HTTP 调试才设 `false` |
+| `REQUIRE_TILES` | `1` | 瓦片缺失时拒绝启动；设 `0` 只告警（底图会全黑） |
 
-如需覆盖，修改 `deploy/.env` 里的 `IMAGE_TAG`、`SERVER_IMAGE`、`WEB_IMAGE`。
-
-启动后：
-
-| 地址 | 用途 |
-| --- | --- |
-| `http://<服务器IP>:8080` | 游戏站 |
-| `http://<服务器IP>:8081` | 后台站（默认只允许内网网段，见 `deploy/nginx.conf`） |
-| `http://127.0.0.1:8787/api/health` | 服务端健康检查（容器内） |
-
-自检：
-
-```bash
-curl -s http://127.0.0.1:8080/api/health
-curl -s http://127.0.0.1:8080/api/stats
-```
-
-首次启动会自动把内置快照导入 SQLite（1622 点位 / 476 道可出题），
-日志里会出现 `[seed] 已导入内置数据`。数据库与上传的截图都在 `nte-geoguess-data` 卷里。
+首次启动会自动把内置题库导入 SQLite，日志里出现
+`[seed] 已导入内置数据：分类 8、点位 476`。
 
 ### 更新版本
 
@@ -135,219 +236,143 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
 
-数据在卷里，不会丢；`seed` 只在 `meta.seed_version` 变化时才会重跑。
-
-> **容器名约定**：compose 会把两个服务命名为 `server` 与 `web`，
-> 而 `deploy/nginx.conf` 里的 upstream 就写着 `server:8787`。
-> 手工 `docker run` 复现这套拓扑时，后端容器必须命名为 `server`，
-> 且与 web 容器在同一个自定义网络里，否则 nginx 会报
-> `host not found in upstream "server:8787"` 并拒绝启动。
+compose 带了 `com.centurylinklabs.watchtower.enable=true` 标签：
+watchtower 以 `--label-enable` 运行时会自动拉新镜像重启，无需手工执行上面两条。
+**注意**：watchtower 不带 `--label-enable` 时会更新机器上所有容器，可能影响别的服务。
 
 ### 备份
 
-只需要备份数据卷（SQLite + 后台上传的截图）：
+数据全在 `DATA_HOST_DIR`（SQLite + 后台上传截图）：
 
 ```bash
-docker run --rm -v nte-geoguess-data:/data -v "$PWD:/backup" alpine \
-  tar czf /backup/nte-geoguess-$(date +%F).tar.gz -C /data .
+sudo tar czf /www/backup/nte-geoguess-$(date +%F).tar.gz -C /www/wwwroot/nte-geoguess data
 ```
 
 ---
 
-## 3. 不用 Docker 直接跑
+## 方式二：宝塔「Node 项目」原生部署（不用 Docker）
 
 ```bash
-npm install
-npm run build:shared
-
-# 服务端（默认 0.0.0.0:8787）
-ADMIN_PASSWORD='你的密码' npm run dev:server
-
-# 另开两个终端跑前端开发服务器（会代理到 8787）
-npm run dev:game    # http://127.0.0.1:5174
-npm run dev:admin   # http://127.0.0.1:5175
+git clone <仓库> /www/wwwroot/nte-geoguess/app
+cd /www/wwwroot/nte-geoguess/app
+npm ci --no-audit --no-fund
+npm run build            # 构建 shared / game / admin
 ```
 
-生产跑法：
+宝塔面板 → 网站 → **Node项目** → 添加项目：
 
-```bash
-npm run build          # 构建 shared + game + admin
-ADMIN_PASSWORD='...' NODE_ENV=production npm start
-# 把 apps/game/dist 与 apps/admin/dist 交给 nginx 托管，/api 反代到 8787
+| 字段 | 值 |
+| --- | --- |
+| 项目目录 | `<部署根>/app`（仓库根） |
+| 启动命令 | `start`（即 package.json 的 `npm run start`） |
+| Node 版本 | **v22.x**（`better-sqlite3` 在 Node 24 上没有预编译包，会编译失败） |
+| 运行用户 | `www` |
+| 项目端口 | `8787` |
+| 绑定域名 | 你的域名 |
+
+环境变量写法：宝塔「默认项目」**不会注入任何自定义环境变量**（源码里前置只导出 `PATH`），
+启动命令里也不能写 `VAR=value cmd`（面板用 `nohup <第一个词>` 直接执行）。
+所以把变量放进**仓库根的 `.env`**，由 `server/src/config.js` 的 `process.loadEnvFile()` 读取：
+
+```dotenv
+PORT=8787
+STATIC_DIR=<仓库>/apps/game/dist
+ADMIN_STATIC_DIR=<仓库>/apps/admin/dist
+TILES_DIR=<部署根>/MapSource/tiles
+DATA_DIR=<仓库>/data
+REQUIRE_TILES=1
+ADMIN_PASSWORD=...
 ```
+
+`.env` 需要 `chmod 600`、属主设为运行用户，并且不要提交（`.gitignore` 已忽略）。
+
+其它注意：
+
+- 更新流程：`git pull` → `npm ci` → `npm run build` → 面板里重启项目。
+  浅克隆无法 `pull --ff-only`（历史被判为分叉），建议完整克隆，或用
+  `git fetch --depth 1 && git reset --hard FETCH_HEAD`。
+- **题库数据更新后要强制重导**：seed 只在 `meta.seed_version` 与代码内版本不一致时执行。
+  数据更新后临时在 `.env` 加 `FORCE_SEED=1` 重启一次，或删掉 `DATA_DIR` 下的 SQLite 让它重导
+  （`uploads/` 不要删）。
+- 在面板里删除该 Node 项目会**连带删除该站点的 nginx 配置**，之后要重建反向代理站点。
 
 ---
 
-## 4. 环境变量清单
+## 环境变量清单
 
-全部有默认值，只有 `ADMIN_PASSWORD` 必须显式设置才能用后台。
+镜像里已写好容器内路径，通常只需要在 `deploy/.env` 里设前面那张表的几个变量。
+完整清单（都有默认值，只有 `ADMIN_PASSWORD` 必须显式设置）：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | 空 | 后台登录密码。**留空则后台接口禁用**（登录返回 503） |
-| `PORT` / `HOST` | `8787` / `0.0.0.0` | 服务端监听 |
-| `DATA_DIR` | `<仓库根>/data` | SQLite 与上传截图的根目录（放在仓库根是为了避开 `node --watch` 的监视范围） |
-| `DATABASE_FILE` | `$DATA_DIR/nte-geoguess.sqlite` | 数据库文件 |
-| `UPLOADS_DIR` | `$DATA_DIR/uploads` | 后台上传的截图 |
-| `SEED_DATA_FILE` | `packages/shared/data/map-data.json` | 首次导入的内置数据快照 |
-| `CALIBRATION_FILE` | `packages/shared/data/navi-coordinate-calibration.json` | 坐标标定 |
-| `SEED_IMAGES_DIR` | `apps/game/public/images/locations` | 内置点位截图 |
-| `ICONS_DIR` | `apps/game/public/icons` | 分类图标 |
-| `TILES_DIR` | `../MapSource/tiles` | 底图瓦片目录 |
+| `ADMIN_PASSWORD` | 空 | 后台登录密码；留空则后台接口禁用（登录返回 503） |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | 容器内监听（镜像默认 8080；原生部署默认 8787） |
+| `STATIC_DIR` / `ADMIN_STATIC_DIR` | 空 | 游戏站 / 后台站产物目录；镜像里是 `/srv/game`、`/srv/admin` |
+| `DATA_DIR` | `<仓库>/data` | SQLite 与上传截图的根目录；镜像里是 `/data` |
+| `DATABASE_FILE` / `UPLOADS_DIR` | `$DATA_DIR/…` | 需要分开指定时才用 |
+| `TILES_DIR` | `<仓库>/../MapSource/tiles` | 瓦片目录；镜像里是 `/srv/tiles` |
+| `REQUIRE_TILES` | `false` | `1` = 瓦片缺失/不完整时拒绝启动（compose 默认 `1`） |
 | `TILE_URL_TEMPLATE` | `/mapsource-tiles/{z}/{x}/{y}.jpg` | 下发给前端的瓦片 URL |
-| `TILE_REDIRECT_BASE` | 空 | 填了则瓦片请求 302 到该地址（CDN）；**留空即完全本地** |
-| `REQUIRE_TILES` | `false` | 设为 `1` 时瓦片缺失/不完整会拒绝启动（compose 默认已开） |
+| `TILE_REDIRECT_BASE` | 空 | 填了则瓦片 302 到该地址（对象存储/CDN）；留空即完全本地 |
+| `SEED_DATA_FILE` / `CALIBRATION_FILE` / `REGION_POSITIONS_FILE` | 镜像内骨架 JSON | 题库快照 / 坐标标定 / 区域落点；生产用挂载覆盖（compose 默认指向 `/srv/data-json/*`） |
+| `SEED_IMAGES_DIR` / `ICONS_DIR` | 仓库内目录 | 内置截图与分类图标 |
 | `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
 | `SESSION_TTL_HOURS` | `12` | 后台会话有效期 |
-| `CORS_ORIGINS` | 空 | 后台站与 API 不同源时填写，逗号分隔 |
+| `CORS_ORIGINS` | 空 | 后台站与 API 不同源时填，逗号分隔（带 Cookie 的跨域不允许 `*`） |
 | `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MINUTES` | `5` / `15` | 登录失败限流 |
-| `BODY_LIMIT_BYTES` | 32MB | 请求体上限（截图以 base64 提交） |
-| `DISABLE_SEED` | `false` | 设为 `true` 跳过首次导入 |
-| `FORCE_SEED` | 未设 | 设为 `1` 强制重新导入一次 |
+| `BODY_LIMIT_BYTES` | `32MB` | 请求体上限（截图以 base64 提交） |
+| `DISABLE_SEED` / `FORCE_SEED` | `false` / 未设 | 跳过首次导入 / 强制重新导入一次 |
 | `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` |
-| `STATIC_DIR` | 空 | 填了则由服务端顺带托管前端产物（单容器简易部署） |
 
-前端侧只有两个变量：
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `VITE_API_BASE` | 空（同源） | 前端访问 API 的基地址；同源部署留空 |
-| `VITE_DEV_SERVER` | `8787` | 仅开发用：vite 代理到后端端口 |
+前端侧只有两个构建期变量：`VITE_API_BASE`（默认空 = 同源，反代部署保持空）、
+`VITE_DEV_SERVER`（仅开发用）。
 
 ---
 
-## 5. HTTPS 与域名
+## HTTPS 与域名（nginx / 宝塔）
 
-nginx 配置里两个 server 共用 8080/8081。上线时通常是：
+1. 在宝塔新建一个**反向代理**站点：域名 → `http://127.0.0.1:8787`（compose 默认绑定）。
+2. 申请/绑定 SSL，并在 `deploy/.env` 里设 `COOKIE_SECURE=true` 后重启容器。
+3. **该站点必须关掉 nginx 代理缓存**：宝塔全局 `proxy.conf` 里有 `proxy_cache cache_one;`，
+   不关的话构建新版本后会命中旧首页 HTML（表现为「页面空白」）。在该站点的 `location /` 里加：
 
-1. 用 Caddy / Traefik / certbot 在最外层做 TLS 终止，把 `game.example.com`
-   转发到 `nginx:8080`、`admin.example.com` 转发到 `nginx:8081`。
-2. 设置了 `COOKIE_SECURE=true`，并让 `CORS_ORIGINS=https://admin.example.com`。
-3. 后台域名最好再加一层防护（VPN、IP 白名单、或 nginx `auth_basic`）。
+   ```nginx
+   proxy_cache off;
+   ```
 
-`deploy/nginx.conf` 里已经给后台站加了内网网段限制，公网部署时按自己的办公网/VPN 段调整。
+4. 后台地址是 `https://<域名>/admin/`，建议再加一层访问限制（Basic Auth / IP 白名单 / VPN）。
 
 ---
 
-## 6. 安全清单
+## 安全清单
 
-- [ ] `ADMIN_PASSWORD` 用强密码，且不要提交 `deploy/.env`
-- [ ] 后台站不暴露在公网（或加 VPN / Basic Auth）
+- [ ] `ADMIN_PASSWORD` 用强密码；`deploy/.env` 不要提交（`.gitignore` 已忽略）
+- [ ] 后台站不暴露在公网，或加 VPN / IP 白名单 / Basic Auth
 - [ ] 生产 HTTPS + `COOKIE_SECURE=true`
-- [ ] `CORS_ORIGINS` 只列真正的后台域名，不要写 `*`（带 Cookie 的跨域请求不允许通配）
-- [ ] 定期备份数据卷
-- [ ] 关注 `server/data/uploads` 体积增长（后台上传的截图）
+- [ ] `CORS_ORIGINS` 只列真正的后台域名
+- [ ] 定期备份 `DATA_HOST_DIR`；关注其体积增长（后台上传的截图）
+- [ ] 域名站点加 `proxy_cache off;`，避免构建后命中旧 HTML
 
 ---
 
-## 7. 故障排查
+## 故障排查
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 游戏站显示「无法载入地图数据」 | `curl http://<host>:8080/api/health`；看 server 容器日志 |
-| 后台登录返回 503 | 没设 `ADMIN_PASSWORD` |
+| 域名 502 | 容器没起来或端口不对：`docker compose ps`、`curl 127.0.0.1:8787/api/health`、检查 nginx `proxy_pass` |
+| 页面空白 / 提示「路径不存在」 | ① 首页 HTML 被 nginx 缓存 → 站点加 `proxy_cache off;`；② 前端没构建或 `STATIC_DIR` 不对 |
+| 页面能开但没有图、统计是 0 | 题库没导入：看日志有没有 `[seed] 已导入内置数据`；数据更新后用 `FORCE_SEED=1` 重导 |
+| 底图黑 / 瓦片 404 | `TILES_HOST_DIR` 挂错；`REQUIRE_TILES=1` 时缺瓦片会直接拒绝启动 |
+| 后台登录 503 | 没设 `ADMIN_PASSWORD` |
 | 后台登录成功但立刻 401 | HTTPS 环境没开 `COOKIE_SECURE`，或跨域没配 `CORS_ORIGINS` |
-| 底图是黑的 | 瓦片目录没挂对（看日志里的「未找到底图瓦片目录」）；或 `TILES_HOST_DIR` 指错 |
-| 题面截图 404 | 内置截图目录没挂对（`SEED_IMAGES_DIR`），或后台删除题目时把图删了 |
-| 后台上传 413 | 截图超过 8MB，或 nginx `client_max_body_size` 太小 |
-| 想让数据重来一遍 | 删掉数据卷，或 `FORCE_SEED=1` 重启一次 |
+| 容器起不来，SQLite 读写失败 | 宿主数据目录权限不对：容器内是 uid 1000，`sudo chown -R 1000:1000 <DATA_HOST_DIR>` |
+| 原生部署 `npm ci` 报 `better-sqlite3` 编译失败 | 用了 Node 24，换 Node 22 |
+| 原生部署点启动报 `failed to run command 'PORT=8787'` | 启动命令不能写 `VAR=value` 前缀，改用 `.env` 文件 |
+| 拉不到基础镜像（`registry-1.docker.io` 超时） | 配 Docker 镜像加速器，或先把 `node:22-alpine` 拉到本地 |
+| 自己构建镜像时 `better-sqlite3` 编译失败 | 基础镜像是 Alpine（musl），该模块没有 musl 预编译包，必须保留构建阶段的 `python3 make g++` 与 `npm rebuild better-sqlite3 --build-from-source` |
 
 看日志：
 
 ```bash
-docker compose -f deploy/docker-compose.yml logs -f server
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f app
 ```
-
-### 拉不到基础镜像（registry-1.docker.io 超时）
-
-国内网络常见：`docker build` 报
-`failed to resolve source metadata for docker.io/library/node:22-bookworm-slim`。
-这不是 Dockerfile 的问题，是拉不到基础镜像。处理办法任选：
-
-1. **配置镜像加速器**（Docker Desktop → Settings → Docker Engine），加入：
-
-   ```json
-   { "registry-mirrors": ["https://<你的加速器地址>"] }
-   ```
-
-2. **先把基础镜像拉到本地**，之后 `docker build` 会直接命中本地层：
-
-   ```bash
-   docker pull <加速器前缀>/library/node:22-bookworm-slim
-   docker tag  <加速器前缀>/library/node:22-bookworm-slim node:22-bookworm-slim
-   docker pull <加速器前缀>/library/nginx:1.27-alpine
-   docker tag  <加速器前缀>/library/nginx:1.27-alpine nginx:1.27-alpine
-   ```
-
-   注意 `Dockerfile` 与 `Dockerfile.web` 都用到了 `node:22-bookworm-slim`，
-   nginx 用到 `nginx:1.27-alpine`，三个 tag 都要有。
-
-3. **完全不用 Docker**：见上面第 3 节，直接 `npm run build` + `npm start`，
-   把 `apps/game/dist`、`apps/admin/dist` 交给宿主上的 nginx。
-
-> 两个镜像已在开发环境实际构建并跑通（见下面「镜像验证记录」）。
-> 若你的网络仍然拉不到基础镜像，按上面三条处理。
-
----
-
-## 8. 镜像验证记录
-
-两个镜像在本项目的开发环境里实际构建并运行过，验证内容如下。
-
-构建（基础镜像先从可达的镜像源拉取并打成标准 tag）：
-
-```bash
-docker pull <镜像源>/library/node:22-bookworm-slim
-docker tag  <镜像源>/library/node:22-bookworm-slim node:22-bookworm-slim
-docker pull <镜像源>/library/nginx:1.27-alpine
-docker tag  <镜像源>/library/nginx:1.27-alpine nginx:1.27-alpine
-
-docker build -f deploy/Dockerfile     -t nte-geoguess-server:test \
-  --build-arg NPM_REGISTRY=https://registry.npmmirror.com .
-docker build -f deploy/Dockerfile.web -t nte-geoguess-web:test \
-  --build-arg NPM_REGISTRY=https://registry.npmmirror.com .
-```
-
-结果：`nte-geoguess-server` 约 572MB，`nte-geoguess-web` 约 106MB。
-
-按生产拓扑起容器（容器名 `server` / `web` 必须与 nginx 里的 upstream 一致）：
-
-```bash
-docker network create nte-test-net
-docker run -d --name server --network nte-test-net \
-  -e ADMIN_PASSWORD='...' -v /path/to/MapSource/tiles:/srv/tiles:ro \
-  nte-geoguess-server:test
-docker run -d --name web --network nte-test-net \
-  -p 8080:8080 -p 8081:8081 nte-geoguess-web:test
-```
-
-已验证的行为：
-
-| 项目 | 结果 |
-| --- | --- |
-| 首次启动 seed | 分类 40、点位 1622（可出题 476），59ms |
-| 容器内 SQLite | better-sqlite3 预编译包可用，**不需要 g++** |
-| 健康检查 | 容器 `HEALTHCHECK` 报 healthy |
-| 静态素材 | `/images/locations/*`、`/icons/*`、`/mapsource-tiles/*` 均 200 |
-| 服务端 API 套件（直连容器） | 全部通过 |
-| 服务端 API 套件（经 nginx） | 全部通过 |
-| 游戏站端到端（经 nginx :8080） | 全部通过 |
-| 后台站端到端（经 nginx :8081） | 全部通过 |
-
-过程中发现并修掉的两个真实缺陷，已包含在仓库里：
-
-1. **内置素材路径没指向镜像内位置**：`Dockerfile` 把截图与图标放到 `/srv/seed-images`、`/srv/icons`，
-   但没设对应的 `ENV`，直接 `docker run` 会导致截图 404。
-   现在 `TILES_DIR` / `SEED_IMAGES_DIR` / `ICONS_DIR` 已在镜像里写好默认值。
-2. **nginx 不转发条件请求头**：默认情况下 nginx 会丢掉 `If-None-Match`，
-   导致 `/api/bootstrap` 的 ETag 复用失效（客户端每次都拿到 200、重传一份数据）。
-   已在 `deploy/nginx-snippets/proxy-headers.conf` 显式转发，
-   同时后端改为按弱 ETag 语义比较（nginx 开 gzip 会把强标签改写成 `W/"..."`）。
-
-### 构建参数
-
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `NPM_REGISTRY` | `https://registry.npmjs.org/` | npm 源，受限网络改成镜像源 |
-| `WITH_BUILD_TOOLS` | `0` | 设为 `1` 装 g++/make/python3；默认不需要（better-sqlite3 有预编译包） |
-| `INCLUDE_TILES` | `0` | 设为 `1` 把瓦片打进镜像 |

@@ -33,6 +33,10 @@ export function useGameData() {
 
       payload.value = bootstrap
       geometry.value = createGeometry(bootstrap.map, bootstrap.calibration)
+      // 服务端下发了区域落点就用它的（方便运维直接改文件，无需重新构建前端）
+      if (Array.isArray(bootstrap.regionPositions) && bootstrap.regionPositions.length) {
+        regionPositions.value = bootstrap.regionPositions
+      }
       puzzleIndex.value = buildPuzzleIndex(
         { categories: bootstrap.categories, locations: bootstrap.locations },
         geometry.value,

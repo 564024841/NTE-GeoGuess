@@ -2,14 +2,15 @@
 //
 // 背景：476 道可出题的截图题，原始 `district` 全是占位值「全地图」，所以按区域筛题一直是空的。
 // 上游 MaaNTE-Map 里有 400 个点位带真实区域名（谕石/赠礼/异象/打卡/支线，见
-// `packages/shared/data/region-reference.json`），它们把六块城区圈得比较干净 —— 用它们当参考点做 kNN
-// 投票，就能把 476 道题按坐标归到区域。
+// `packages/shared/data/region-reference.json`），它们把六块城区圈得比较干净 —— 用它们当参考点做
+// kNN 投票，就能把 476 道题按坐标归到区域。
+//
+// 推断规则本身在 `packages/shared/src/regionInference.js`，后台出题时用的是同一份实现。
 //
 // 规则：
 //   1. 点的 `district` 是真实区域名时直接采信（不参与投票）；
-//   2. 否则取最近 K 个参考点，按 1/距离 加权投票，票数最高的区域胜出；
-//   3. 离最近参考点超过 MAX_DIST（标定像素）的点，说明落在参考点覆盖之外（地图西北那块飞地），
-//      归「薄暮区」——那边一个探索度点位都没有，硬按 kNN 投只会投给相邻城区。
+//   2. 否则交给 shared 的推断：最近 K 个参考点按 1/距离 加权投票；
+//   3. 离最近参考点超过 MAX_DIST（标定像素）的，说明落在覆盖之外（地图西北那块飞地），归「薄暮区」。
 //
 // 参考点自检（留一法）：400 个参考点逐个拿掉自己再投票，97% 能回到自己的区域 ——
 // 用 `--cv` 复现。城区里 471 道题离最近参考点 ≤235 像素，之后直接跳到 1368 像素，
@@ -26,12 +27,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createGeometry } from '@nte-geoguess/shared'
+import { createGeometry } from '@nte-geoguess/shared/geometry'
+import { createRegionInference, REGION_INFERENCE_DEFAULTS } from '@nte-geoguess/shared/regionInference'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SEED_FILE = process.env.SEED_FILE || path.join(ROOT, 'packages/shared/data/map-data.json')
 const CALIBRATION_FILE = path.join(ROOT, 'packages/shared/data/navi-coordinate-calibration.json')
-const REFERENCE_FILE = path.join(ROOT, 'packages/shared/data/region-reference.json')
 const BACKUP_DIR = path.join(ROOT, 'data/backups')
 const API_BASE = process.env.API_BASE || 'http://127.0.0.1:8787'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'test-admin-pw'
@@ -41,7 +42,6 @@ const CROSS_VALIDATE = process.argv.includes('--cv')
 
 const PLACEHOLDER = '全地图'
 const UNLABELED_LABEL = '未标注'
-const TWILIGHT_LABEL = '薄暮区'
 const REGION_GROUP = '区域'
 
 function option(name, fallback) {
@@ -50,13 +50,13 @@ function option(name, fallback) {
   return hit ? Number(hit.slice(prefix.length)) : fallback
 }
 
-const K = option('k', 7)
-const MAX_DIST = option('max-dist', 1000)
+const K = option('k', REGION_INFERENCE_DEFAULTS.k)
+const MAX_DIST = option('max-dist', REGION_INFERENCE_DEFAULTS.maxDistance)
 
 const seed = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'))
 const calibration = JSON.parse(fs.readFileSync(CALIBRATION_FILE, 'utf8'))
-const reference = JSON.parse(fs.readFileSync(REFERENCE_FILE, 'utf8'))
 const geometry = createGeometry(seed.map, calibration)
+const inference = createRegionInference({ geometry, k: K, maxDistance: MAX_DIST })
 
 // 分类 id ↔ 区域名：直接照 seed 里的分类表来，避免脚本里再抄一份映射表（抄了就会漂）
 const regionCategoryByLabel = new Map(
@@ -73,37 +73,7 @@ function regionCategory(label) {
   return category
 }
 
-const twilight = regionCategory(TWILIGHT_LABEL)
-
-// ---------- 参考点：游戏坐标 → 标定像素 ----------
-
-const references = reference.points.map((point) => {
-  const pixel = geometry.gameToMapPixel({ x: point.x, y: point.y })
-  return { pixelX: pixel.pixelX, pixelY: pixel.pixelY, label: point.district, id: point.id }
-})
-
-const distance = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by)
-
-// 反距离加权投票：返回 { label, confidence, nearestDistance }
-function vote(pixelX, pixelY, pool = references, k = K) {
-  const sorted = pool
-    .map((point) => ({ d: distance(pixelX, pixelY, point.pixelX, point.pixelY), label: point.label }))
-    .sort((a, b) => a.d - b.d)
-    .slice(0, k)
-
-  const weightByLabel = new Map()
-  for (const item of sorted) {
-    weightByLabel.set(item.label, (weightByLabel.get(item.label) || 0) + 1 / Math.max(item.d, 1))
-  }
-  const total = [...weightByLabel.values()].reduce((sum, value) => sum + value, 0)
-  const [label, weight] = [...weightByLabel.entries()].sort((a, b) => b[1] - a[1])[0]
-  return { label, confidence: weight / total, nearestDistance: sorted[0]?.d ?? Infinity }
-}
-
-function isRealDistrict(location) {
-  const district = (location.district || '').trim()
-  return Boolean(district) && district !== PLACEHOLDER
-}
+const inferredOutsideLabel = inference.outsideLabel
 
 // 一个点位最终归到哪个区域
 function classify(location) {
@@ -111,13 +81,13 @@ function classify(location) {
   if (district && district !== PLACEHOLDER && regionCategoryByLabel.has(district)) {
     return { label: district, reason: 'district', confidence: 1, nearestDistance: 0 }
   }
-  const pixel = geometry.gameToMapPixel({ x: location.x, y: location.y })
-  const result = vote(pixel.pixelX, pixel.pixelY)
-  if (result.nearestDistance > MAX_DIST) {
-    // 注意顺序：先铺开投票结果，再用覆盖规则覆盖 label —— 反过来会被 kNN 的票数盖掉
-    return { ...result, label: TWILIGHT_LABEL, reason: 'outside-coverage' }
+  const result = inference.infer(location)
+  return {
+    label: result.label,
+    confidence: result.confidence,
+    nearestDistance: result.nearestDistance,
+    reason: result.outside ? 'outside-coverage' : 'knn',
   }
-  return { ...result, reason: 'knn' }
 }
 
 // ---------- 逐个点位归类 ----------
@@ -142,7 +112,7 @@ const outside = rows.filter((row) => row.result.reason === 'outside-coverage')
 const fromDistrict = rows.filter((row) => row.result.reason === 'district')
 
 console.log('=== 按坐标分类区域 ===')
-console.log(`  参考点        ${references.length} 个（${[...new Set(references.map((point) => point.label))].length} 个区域）`)
+console.log(`  参考点        ${inference.referenceCount} 个（${inference.labels.length} 个区域）`)
 console.log(`  参数          k=${K}，覆盖半径 ${MAX_DIST} 标定像素（整图宽 13056）`)
 console.log(`  点位          ${rows.length} 个，其中按 district 直接采信 ${fromDistrict.length} 个`)
 console.log('  分类结果：')
@@ -151,13 +121,8 @@ for (const [label, count] of [...distribution.entries()].sort((a, b) => b[1] - a
 }
 
 if (CROSS_VALIDATE) {
-  let hit = 0
-  for (let index = 0; index < references.length; index += 1) {
-    const self = references[index]
-    const pool = references.filter((_, other) => other !== index)
-    if (vote(self.pixelX, self.pixelY, pool).label === self.label) hit += 1
-  }
-  console.log(`  参考点自检    留一法准确率 ${(hit / references.length * 100).toFixed(1)}%（${hit}/${references.length}）`)
+  const cv = inference.crossValidate()
+  console.log(`  参考点自检    留一法准确率 ${(cv.accuracy * 100).toFixed(1)}%（${cv.hit}/${cv.total}）`)
 }
 
 console.log(`\n  归属会变化的点位 ${changed.length} 个`)
@@ -175,7 +140,7 @@ if (borderline.length) {
 }
 
 if (outside.length) {
-  console.log(`\n  参考点覆盖之外 → ${TWILIGHT_LABEL}${outside.length} 个：`)
+  console.log(`\n  参考点覆盖之外 → ${inferredOutsideLabel}${outside.length} 个：`)
   for (const row of outside.sort((a, b) => a.result.nearestDistance - b.result.nearestDistance)) {
     console.log(`    ${row.location.id.padEnd(26)} 原属 ${row.currentLabel}，最近参考点 ${Math.round(row.result.nearestDistance)}px`)
   }
