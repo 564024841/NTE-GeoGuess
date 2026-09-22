@@ -19,6 +19,11 @@
 ghcr.io/564024841/nte-geoguess:latest
 ```
 
+镜像基于 **Alpine**（`node:22-alpine`，musl）：运行阶段只有 `ca-certificates`、`curl`、`tini`、
+`libstdc++` 这几个包，体积比 Debian 版小一截。代价是 `better-sqlite3` 没有 musl 预编译包，
+构建时要在 Alpine 里从源码编译（`deploy/Dockerfile` 构建阶段已装好 `python3 make g++`），
+自己改 Dockerfile 时别把那步删掉。
+
 > 旧版本曾是「server + web 两个镜像、对外 8080/8081 两个端口」，**现已废弃**，
 > 请使用下面的单镜像方式。
 
@@ -363,7 +368,8 @@ ADMIN_PASSWORD=...
 | 容器起不来，SQLite 读写失败 | 宿主数据目录权限不对：容器内是 uid 1000，`sudo chown -R 1000:1000 <DATA_HOST_DIR>` |
 | 原生部署 `npm ci` 报 `better-sqlite3` 编译失败 | 用了 Node 24，换 Node 22 |
 | 原生部署点启动报 `failed to run command 'PORT=8787'` | 启动命令不能写 `VAR=value` 前缀，改用 `.env` 文件 |
-| 拉不到基础镜像（`registry-1.docker.io` 超时） | 配 Docker 镜像加速器，或先把 `node:22-bookworm-slim` 拉到本地 |
+| 拉不到基础镜像（`registry-1.docker.io` 超时） | 配 Docker 镜像加速器，或先把 `node:22-alpine` 拉到本地 |
+| 自己构建镜像时 `better-sqlite3` 编译失败 | 基础镜像是 Alpine（musl），该模块没有 musl 预编译包，必须保留构建阶段的 `python3 make g++` 与 `npm rebuild better-sqlite3 --build-from-source` |
 
 看日志：
 
