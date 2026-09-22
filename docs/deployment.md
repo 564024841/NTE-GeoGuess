@@ -1,7 +1,7 @@
 # 部署指南
 
 目标形态：**一个容器**同时提供游戏站（`/`）、后台站（`/admin/`）、API 与素材，
-外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片**已打进镜像**（CI 构建时拉取烘焙）。
+外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片**不在镜像里**，从宿主目录挂载。
 
 ```
 浏览器 ──▶ nginx（域名 + HTTPS，站点内 proxy_cache off）
@@ -9,7 +9,7 @@
                                        ├─ /              游戏站（STATIC_DIR）
                                        ├─ /admin/         后台站（ADMIN_STATIC_DIR）
                                        ├─ /api /images /icons
-                                       └─ /mapsource-tiles ──▶ /srv/tiles（镜像内置瓦片）
+                                       └─ /mapsource-tiles ──▶ /srv/tiles（宿主目录挂载）
                                     数据：/data（宿主目录挂载：SQLite + 上传截图）
 ```
 
@@ -46,21 +46,28 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 生产建议设 `REQUIRE_TILES=1`（compose 默认已开）：瓦片缺失或不完整时服务端**拒绝启动**，
 避免「服务起来了但底图全黑」这种难排查的状态。
 
-### 镜像里的瓦片
+### 瓦片：不在镜像里，从宿主目录挂载
 
-底图瓦片**已经打进镜像**：GitHub Actions 在构建前会从 `Maa-NTE/MapSource` 拉一次 `tiles/`
-（约 30MB / 3516 张），`Dockerfile` 的 tiles 阶段把它放进 `/srv/tiles`，并校验
-`z=0` 有 51 个 x 目录、总数不少于 3000 张——校验不过就**不会发镜像**，避免发布"底图全黑"的版本。
+镜像**不含瓦片**（保持精简，也避免再分发没有许可证声明的游戏底图）。
+部署前先把瓦片放到宿主目录，再挂进容器 `/srv/tiles`：
 
-因此部署端不需要准备瓦片目录。想用宿主目录里的瓦片覆盖镜像内容时，
-取消 `deploy/docker-compose.yml` 里那行只读挂载并设 `TILES_HOST_DIR` 即可：
-
-```yaml
-      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
+```bash
+npm run tiles:fetch          # 拉到仓库同级的 MapSource/tiles（约 30MB / 3516 张）
+npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、抽样 7 张）
 ```
 
-> 注意：`Maa-NTE/MapSource` 未声明许可证（默认"保留所有权利"），瓦片随镜像分发等同于再分发游戏底图。
-> 如果你的 GHCR 包是 public，建议改成 private，或改用宿主挂载（`TILES_HOST_DIR`）避免分发。
+`deploy/.env` 里设 `TILES_HOST_DIR=<瓦片目录>`；compose 里对应这一行：
+
+```yaml
+      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles
+```
+
+**更新瓦片**：直接往这个宿主目录里覆盖 `{z}/{x}/{y}.jpg` 即可——服务端按请求读盘，
+上传完立即生效，不用重建镜像、也不用重启容器（想复查就 `docker compose restart app`，
+启动时会抽样自检瓦片并打印结论）。
+
+`REQUIRE_TILES=1`（compose 默认）时，宿主瓦片目录为空或不完整会让服务端**拒绝启动**，
+避免出现"服务起来了但底图全黑"。临时调试可以先设 `REQUIRE_TILES=0`。
 
 ---
 
@@ -71,7 +78,7 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 git clone https://github.com/564024841/NTE-GeoGuess.git /www/wwwroot/nte-geoguess/app
 cd /www/wwwroot/nte-geoguess/app
 
-# 2) 准备环境文件（至少改 ADMIN_PASSWORD；瓦片已内置，不用管 TILES_*）
+# 2) 准备环境文件（至少改 ADMIN_PASSWORD 和 TILES_HOST_DIR）
 cp deploy/.env.example deploy/.env
 
 # 3) 数据目录要能被容器内的 node 用户（uid 1000）写入
@@ -94,6 +101,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f --tai
 | `ADMIN_PASSWORD` | 无（必填） | 后台登录密码；留空则后台接口禁用 |
 | `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 只监听本机交给 nginx 反代；想直接暴露就设 `0.0.0.0:8080` |
 | `DATA_HOST_DIR` | `./data` | SQLite + 上传截图，务必持久化并备份 |
+| `TILES_HOST_DIR` | `../../MapSource/tiles` | 底图瓦片目录（镜像不含瓦片，必须挂载） |
 | `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
 
 首次启动会自动把内置题库导入 SQLite，日志里出现

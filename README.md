@@ -197,8 +197,15 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 | `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图，务必持久化并备份 |
 | `ADMIN_PASSWORD` | 无 | 后台登录密码；留空则后台接口禁用 |
 
-底图瓦片**已经打进镜像**（CI 构建时从 `Maa-NTE/MapSource` 拉取并烘焙到 `/srv/tiles`，约 30MB），
-所以部署端不需要准备瓦片目录；想用宿主目录覆盖时，取消 compose 里那行只读挂载即可。
+底图瓦片**不在镜像里**（镜像保持精简、也不涉及再分发底图），必须从宿主目录挂载：
+
+```bash
+npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
+# 然后在 deploy/.env 里设 TILES_HOST_DIR=<该目录>
+```
+
+以后更新瓦片，**直接往这个宿主目录里覆盖文件即可**——服务端按请求读盘，上传完立即生效，
+不需要重建镜像、也不需要重启容器（想验证可以 `docker compose restart app` 看启动自检日志）。
 
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，

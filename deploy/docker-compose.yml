@@ -40,6 +40,7 @@ services:
     volumes:
       # SQLite 与后台上传截图持久化
       - ${DATA_HOST_DIR:-./data}:/data
-      # 底图瓦片已经打进镜像（CI 构建时拉取并烘焙），这里不需要挂载。
-      # 想用宿主目录覆盖镜像里的瓦片时，取消下一行注释即可：
-      # - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
+      # 底图瓦片不在镜像里（镜像保持精简），必须从宿主目录挂进来。
+      # 该目录要是完整瓦片集（z=-6..0 的 {z}/{x}/{y}.jpg）；以后更新瓦片，
+      # 直接往这个宿主目录里覆盖文件即可，不需要重建镜像、也不需要重启容器。
+      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles
