@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "游戏前端、后台前端与后端共用的地图几何、题库与评分逻辑",
+  "license": "AGPL-3.0-only",
   "exports": {
     ".": {
       "import": "./dist/index.js",

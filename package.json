@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "NTE 图寻：看游戏内截图猜位置的小游戏（游戏站 + 后台站 + 服务端）",
+  "license": "AGPL-3.0-only",
   "workspaces": [
     "packages/*",
     "apps/*",

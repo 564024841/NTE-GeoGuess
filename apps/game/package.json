@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "图寻游戏站（只读，面向玩家）",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "vite --configLoader runner --host 127.0.0.1 --port 5174",
     "build": "vite build --configLoader runner",

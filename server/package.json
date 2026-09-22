@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "图寻服务端：题库 API、鉴权、截图与底图瓦片托管",
+  "license": "AGPL-3.0-only",
   "main": "src/index.js",
   "engines": {
     "node": ">=20.11"

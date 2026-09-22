@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "图寻题库后台（登录、出题、题库与分类管理）",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "vite --configLoader runner --host 127.0.0.1 --port 5175",
     "build": "vite build --configLoader runner",
