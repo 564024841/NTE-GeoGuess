@@ -92,6 +92,54 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 
 ---
 
+## 宝塔面板：用 Compose 项目部署（单文件 compose）
+
+不想用 `.env` 文件、也不想在宿主上散落配置时，直接用仓库里的
+[`deploy/docker-compose.standalone.yml`](../deploy/docker-compose.standalone.yml)：
+**环境变量全部内联在 compose 里**，把这个文件（或它的内容）交给宝塔的
+「Docker → Compose 项目 → 添加」即可。
+
+### 目录是怎么绑定的
+
+宝塔会把 compose 项目建在 `/www/server/panel/data/compose/<项目名>/`，
+**compose 里的相对路径就是相对这个项目目录解析的**（宝塔自己的 Compose 项目都这么用，
+例如 Forgejo 的 `./forgejo:/data` 实际就是 `/www/server/panel/data/compose/Forgejo/forgejo`）。
+所以用相对路径最省事：
+
+```yaml
+    volumes:
+      - ./data:/data                    # → <项目目录>/data
+      - ./tiles:/srv/tiles              # → <项目目录>/tiles
+      - ./data-json:/srv/data-json:ro   # → <项目目录>/data-json
+```
+
+也就是要在项目目录里准备好：
+
+| 目录 | 内容 | 权限 |
+| --- | --- | --- |
+| `data/` | SQLite + 后台上传截图 | 容器以 uid 1000 写入：`chown -R 1000:1000 data` |
+| `tiles/` | 完整底图瓦片（`z=-6..0` 的 `{z}/{x}/{y}.jpg`） | 只读挂载，可读即可 |
+| `data-json/` | `map-data.json`、`navi-coordinate-calibration.json`、`region-positions.json` | 只读挂载，可读即可 |
+
+> 如果你更习惯把数据放在 `/www/wwwroot/nte-geoguess/` 下（不和宝塔自己的数据区混在一起），
+> 把上面三行的相对路径换成绝对路径即可，例如
+> `- /www/wwwroot/nte-geoguess/data:/data`。
+> **不要**把这些目录放到 `/www/server/panel/data` 里手工 chmod/chown ——
+> 那是宝塔自己的数据区（`600 root`），权限被改坏会连带多个服务起不来。
+
+### 更新流程（都不需要重建镜像）
+
+| 改什么 | 怎么做 | 生效方式 |
+| --- | --- | --- |
+| 主程序 | `git push` → Actions 出镜像 | watchtower 自动拉取，或 `docker compose pull && up -d` |
+| 底图瓦片 | 往 `tiles/` 覆盖文件 | 下个请求即生效 |
+| 坐标标定 / 区域落点 | 覆盖 `data-json/` 里的文件 | 下个请求即生效 |
+| 题库快照 | 覆盖 `data-json/map-data.json` | 加 `FORCE_SEED=1` 重启一次（或删 `data/` 里的 SQLite 重启）后导入 |
+
+---
+
+---
+
 ## 方式一：Docker Compose（推荐）
 
 ```bash

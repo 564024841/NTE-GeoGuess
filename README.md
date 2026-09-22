@@ -212,6 +212,11 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 `/srv/data-json`（compose 默认已配好 `SHARED_DATA_HOST_DIR`），改文件即生效
 （其中题库快照需要 `FORCE_SEED=1` 重启一次让它重新导入）。
 
+不想用 `.env`、想交给宝塔的「Docker → Compose 项目」管理时，用
+[`deploy/docker-compose.standalone.yml`](deploy/docker-compose.standalone.yml)：
+环境变量全部内联，卷用相对路径（宝塔会解析到 `/www/server/panel/data/compose/<项目名>/`）。
+细节见 [`docs/deployment.md`](docs/deployment.md) 的「宝塔面板：用 Compose 项目部署」。
+
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
 它会自动拉新镜像并重启，无需手工干预。

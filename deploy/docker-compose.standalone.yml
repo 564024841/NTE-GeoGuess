@@ -1,0 +1,52 @@
+# 图寻 · 宝塔「Docker → Compose 项目」用的单文件 compose
+# （环境变量全部内联，不依赖 .env）
+#
+# 用法：宝塔面板 → Docker → Compose 项目 → 添加，把本文件内容粘进去（或指向本文件的路径）。
+# 宝塔会把项目建在 /www/server/panel/data/compose/<项目名>/，
+# 下面的相对路径就落在该项目目录里，例如 ./data → /www/server/panel/data/compose/nte-geoguess/data
+#
+# 部署前准备三个目录（相对本项目目录）：
+#   ./data/        SQLite + 后台上传截图；容器以 uid 1000 写入 → chown 1000:1000
+#   ./tiles/       完整底图瓦片，z=-6..0 的 {z}/{x}/{y}.jpg（约 30MB / 3516 张）
+#   ./data-json/   map-data.json、navi-coordinate-calibration.json、region-positions.json
+
+services:
+  app:
+    image: ghcr.io/564024841/nte-geoguess:latest
+    container_name: nte-geoguess
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "8080"                # 容器内监听；对外只绑本机 8787，交给宝塔 nginx 反代
+      HOST: 0.0.0.0
+
+      DATA_DIR: /data
+      STATIC_DIR: /srv/game
+      ADMIN_STATIC_DIR: /srv/admin
+
+      ADMIN_PASSWORD: "change-me-please"   # ← 改成你自己的
+      COOKIE_SECURE: "true"                # 走 HTTPS 必须 true，否则后台登录会立刻 401
+      SESSION_TTL_HOURS: "12"
+      CORS_ORIGINS: ""                     # 同源部署留空
+
+      TILES_DIR: /srv/tiles
+      REQUIRE_TILES: "1"
+      SEED_IMAGES_DIR: /srv/seed-images/locations
+      ICONS_DIR: /srv/icons
+      TILE_URL_TEMPLATE: "/mapsource-tiles/{z}/{x}/{y}.jpg"
+
+      # 内容数据：不在 git 上更新，从 ./data-json 挂进来
+      SEED_DATA_FILE: /srv/data-json/map-data.json
+      CALIBRATION_FILE: /srv/data-json/navi-coordinate-calibration.json
+      REGION_POSITIONS_FILE: /srv/data-json/region-positions.json
+
+      LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:8787:8080"
+    volumes:
+      - ./data:/data
+      - ./tiles:/srv/tiles
+      - ./data-json:/srv/data-json:ro
+    labels:
+      # watchtower 带 --label-enable 时会自动拉新镜像重启（不带则会更新所有容器）
+      com.centurylinklabs.watchtower.enable: "true"
