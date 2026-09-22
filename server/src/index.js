@@ -30,6 +30,8 @@ function requestPathname(url) {
 
 function sendHtmlFile(reply, filePath) {
   reply.type('text/html; charset=utf-8')
+  // 深链接（/admin/xxx、/some/route）回落到入口 HTML —— 同样不能缓存住旧引用
+  reply.header('Cache-Control', 'no-cache')
   return reply.send(fs.createReadStream(filePath))
 }
 
@@ -140,6 +142,17 @@ export async function buildServer({ logger = true } = {}) {
   let gameIndexFile = null
   let adminIndexFile = null
 
+  // 前端产物里，带内容哈希的 js/css/图片可以放心长缓存；但**入口 HTML 不能**：
+  // 发新版本后 HTML 引用的旧 JS 文件已经不存在（哈希变了），浏览器拿着缓存里的旧 HTML
+  // 去请求旧文件名，只会拿到 SPA 兜底页（HTML），表现为「白屏 / 看不到新功能 / 后台地图没瓦片」。
+  // 所以入口 HTML 一律 no-cache（每次用 ETag/Last-Modified 重新校验），其余按 maxAge 缓存。
+  const frontendHeaders = (res, filePath) => {
+    res.setHeader(
+      'Cache-Control',
+      filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=3600',
+    )
+  }
+
   const gameStaticDir = process.env.STATIC_DIR ? path.resolve(process.env.STATIC_DIR) : ''
   if (gameStaticDir && fs.existsSync(gameStaticDir)) {
     gameIndexFile = path.join(gameStaticDir, 'index.html')
@@ -147,7 +160,8 @@ export async function buildServer({ logger = true } = {}) {
       root: gameStaticDir,
       prefix: '/',
       decorateReply: false,
-      maxAge: '1h',
+      cacheControl: false,
+      setHeaders: frontendHeaders,
     })
   } else if (process.env.STATIC_DIR) {
     app.log.warn(`[静态] STATIC_DIR 不存在：${gameStaticDir}`)
@@ -160,7 +174,8 @@ export async function buildServer({ logger = true } = {}) {
       root: adminStaticDir,
       prefix: '/admin/',
       decorateReply: false,
-      maxAge: '1h',
+      cacheControl: false,
+      setHeaders: frontendHeaders,
     })
   } else if (process.env.ADMIN_STATIC_DIR) {
     app.log.warn(`[静态] ADMIN_STATIC_DIR 不存在：${adminStaticDir}`)
