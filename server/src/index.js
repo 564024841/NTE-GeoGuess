@@ -24,6 +24,15 @@ import { registerAdminRoutes } from './routes/admin.js'
 import { UploadError, countUploadedImages } from './uploads.js'
 import { ValidationError } from './validate.js'
 
+function requestPathname(url) {
+  return String(url || '').split('?')[0] || '/'
+}
+
+function sendHtmlFile(reply, filePath) {
+  reply.type('text/html; charset=utf-8')
+  return reply.send(fs.createReadStream(filePath))
+}
+
 export async function buildServer({ logger = true } = {}) {
   const app = Fastify({
     logger: logger
@@ -92,10 +101,6 @@ export async function buildServer({ logger = true } = {}) {
     })
   })
 
-  app.setNotFoundHandler((request, reply) => {
-    reply.code(404).send({ error: `接口不存在：${request.method} ${request.url}` })
-  })
-
   // ---------------- 静态素材 ----------------
 
   // 内置点位截图（仓库自带，只读）
@@ -129,19 +134,36 @@ export async function buildServer({ logger = true } = {}) {
     })
   }
 
-  // 前端构建产物（同源部署时用；分开部署则由 nginx 处理）
-  if (process.env.STATIC_DIR) {
-    const staticDir = path.resolve(process.env.STATIC_DIR)
-    if (fs.existsSync(staticDir)) {
-      await app.register(fastifyStatic, {
-        root: staticDir,
-        prefix: '/',
-        decorateReply: false,
-        maxAge: '1h',
-      })
-    } else {
-      app.log.warn(`[静态] STATIC_DIR 不存在：${staticDir}`)
-    }
+  // 前端构建产物（同源部署时用）：
+  //   /            -> 游戏站
+  //   /admin(/...) -> 后台站
+  let gameIndexFile = null
+  let adminIndexFile = null
+
+  const gameStaticDir = process.env.STATIC_DIR ? path.resolve(process.env.STATIC_DIR) : ''
+  if (gameStaticDir && fs.existsSync(gameStaticDir)) {
+    gameIndexFile = path.join(gameStaticDir, 'index.html')
+    await app.register(fastifyStatic, {
+      root: gameStaticDir,
+      prefix: '/',
+      decorateReply: false,
+      maxAge: '1h',
+    })
+  } else if (process.env.STATIC_DIR) {
+    app.log.warn(`[静态] STATIC_DIR 不存在：${gameStaticDir}`)
+  }
+
+  const adminStaticDir = process.env.ADMIN_STATIC_DIR ? path.resolve(process.env.ADMIN_STATIC_DIR) : ''
+  if (adminStaticDir && fs.existsSync(adminStaticDir)) {
+    adminIndexFile = path.join(adminStaticDir, 'index.html')
+    await app.register(fastifyStatic, {
+      root: adminStaticDir,
+      prefix: '/admin/',
+      decorateReply: false,
+      maxAge: '1h',
+    })
+  } else if (process.env.ADMIN_STATIC_DIR) {
+    app.log.warn(`[静态] ADMIN_STATIC_DIR 不存在：${adminStaticDir}`)
   }
 
   // ---------------- 业务路由 ----------------
@@ -155,6 +177,37 @@ export async function buildServer({ logger = true } = {}) {
     database: databaseStatus(),
     images: countUploadedImages(),
   }))
+
+  app.setNotFoundHandler((request, reply) => {
+    const pathname = requestPathname(request.url)
+    const isApiPath = pathname === '/api' || pathname.startsWith('/api/')
+    if (isApiPath) {
+      reply.code(404).send({ error: `接口不存在：${request.method} ${request.url}` })
+      return
+    }
+
+    const isAssetPath = pathname.startsWith('/images/')
+      || pathname.startsWith('/icons/')
+      || pathname.startsWith('/mapsource-tiles/')
+    if (isAssetPath) {
+      reply.code(404).send({ error: `资源不存在：${request.method} ${request.url}` })
+      return
+    }
+
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      reply.code(404).send({ error: `路径不存在：${request.method} ${request.url}` })
+      return
+    }
+
+    if (adminIndexFile && (pathname === '/admin' || pathname.startsWith('/admin/'))) {
+      return sendHtmlFile(reply, adminIndexFile)
+    }
+    if (gameIndexFile) {
+      return sendHtmlFile(reply, gameIndexFile)
+    }
+
+    reply.code(404).send({ error: `路径不存在：${request.method} ${request.url}` })
+  })
 
   return app
 }
