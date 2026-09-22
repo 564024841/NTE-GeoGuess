@@ -8,6 +8,18 @@ import { fileURLToPath } from 'node:url'
 const serverRoot = fileURLToPath(new URL('..', import.meta.url))
 const repoRoot = path.resolve(serverRoot, '..')
 
+// 允许用仓库根的 .env 提供部署环境变量（Node >= 20.12 自带能力，不需要 dotenv）。
+//
+// 用途：宝塔面板的「Node 项目（默认项目）」启动时只导出 PATH，不会注入任何自定义
+// 环境变量，而启动命令里也不能写 `VAR=value cmd` 这种前缀（面板是 nohup 直接执行
+// 第一个词）。所以生产环境把 PORT / STATIC_DIR / ADMIN_STATIC_DIR / TILES_DIR /
+// DATA_DIR / REQUIRE_TILES / ADMIN_PASSWORD 等写进仓库根的 .env，由这里读取。
+//
+// 文件不存在时静默跳过；已经存在的真实环境变量优先级更高（loadEnvFile 不会覆盖）。
+try {
+  process.loadEnvFile(path.join(repoRoot, '.env'))
+} catch {}
+
 function env(name, fallback = '') {
   const value = process.env[name]
   return value === undefined || value === '' ? fallback : value
