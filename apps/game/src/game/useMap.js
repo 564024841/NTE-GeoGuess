@@ -109,9 +109,10 @@ export function useMap({
     if (!geometry.value) return
 
     for (const region of regionPositions.value || []) {
+      // region-positions.json 用 x / y（标定像素），与 shared 里的约定一致
       const latlng = geometry.value.mapLocatorToMapLatLng({
-        pixelX: region.pixelX,
-        pixelY: region.pixelY,
+        pixelX: region.x,
+        pixelY: region.y,
       })
       const icon = L.divIcon({
         className: 'region-label-shell',

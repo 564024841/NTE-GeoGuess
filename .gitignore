@@ -5,10 +5,19 @@ output/
 *.log
 
 # 服务端运行数据（SQLite 与后台上传的截图）
-data/
-server/data/
+#
+# 必须带前导斜杠！写 `data/` 会匹配任意层级的 data 目录，
+# 连带把 packages/shared/data/（地图数据）也忽略掉——那会导致
+# 「本地跑得好好的、一提交就没有地图数据」。这个坑踩过一次，
+# 当时的后果是 CI 里 Docker 构建报缺文件，然后有个自动化流程
+# 为了让构建通过，把真实数据换成了空的占位骨架并提交上去了。
+/data/
+/server/data/
 
-# 允许提交静态数据文件（shared 包需这些 JSON 才能编译与启动）
+# 内置地图数据（packages/shared/data/*.json）是「必须提交」的源码级数据：
+# 服务端 seed、坐标换算、区域标签都依赖它，缺了就跑不起来。
+# 故意不在这里写忽略规则；下面两行是显式声明的例外，防止有人日后
+# 补上宽泛规则时又把它们带下水。
 !packages/shared/data/
 !packages/shared/data/*.json
 

@@ -1,11 +1,55 @@
 {
+  "version": 2,
+  "source": "region-centroids",
   "regions": [
-    { "id": "region-hyuga", "label": "向阳岛", "x": 13056, "y": 13056 },
-    { "id": "region-new-holland", "label": "新赫兰德区", "x": 13056, "y": 13056 },
-    { "id": "region-miminoura", "label": "未闻浦", "x": 13056, "y": 13056 },
-    { "id": "region-hashima", "label": "桥间地", "x": 13056, "y": 13056 },
-    { "id": "region-miguel", "label": "米格尔区", "x": 13056, "y": 13056 },
-    { "id": "region-ekuumachi", "label": "绘空町", "x": 13056, "y": 13056 },
-    { "id": "region-twilight", "label": "薄暮区", "x": 13056, "y": 13056 }
+    {
+      "id": "region-hyuga",
+      "label": "向阳岛",
+      "x": 2258,
+      "y": 11096,
+      "pointCount": 19
+    },
+    {
+      "id": "region-new-holland",
+      "label": "新赫兰德区",
+      "x": 6483,
+      "y": 6906,
+      "pointCount": 94
+    },
+    {
+      "id": "region-miminoura",
+      "label": "未闻浦",
+      "x": 3775,
+      "y": 8622,
+      "pointCount": 43
+    },
+    {
+      "id": "region-hashima",
+      "label": "桥间地",
+      "x": 4745,
+      "y": 7878,
+      "pointCount": 80
+    },
+    {
+      "id": "region-miguel",
+      "label": "米格尔区",
+      "x": 5955,
+      "y": 5577,
+      "pointCount": 80
+    },
+    {
+      "id": "region-ekuumachi",
+      "label": "绘空町",
+      "x": 4186,
+      "y": 7027,
+      "pointCount": 84
+    },
+    {
+      "id": "region-twilight",
+      "label": "薄暮区",
+      "x": 2262,
+      "y": 5659,
+      "pointCount": 4
+    }
   ]
 }

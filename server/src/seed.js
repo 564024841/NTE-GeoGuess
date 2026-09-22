@@ -38,6 +38,29 @@ export function seedIfNeeded(logger = console) {
   const categories = Array.isArray(mapData.categories) ? mapData.categories : []
   const locations = Array.isArray(mapData.locations) ? mapData.locations : []
 
+  // 防呆：快照可能是「占位骨架」——键都在、值全空。
+  // 这种文件在仓库里很容易因为误打包/误替换而产生，而它的表现是
+  // 「服务正常启动、游戏能打开，但一道题都抽不出来、地图上一个点都没有」，
+  // 排查成本很高。所以这里直接拒绝导入，并把原因说清楚。
+  if (!categories.length || !locations.length) {
+    throw new Error(
+      `内置地图数据快照是空的（分类 ${categories.length} 个、点位 ${locations.length} 个）：`
+      + `${config.seedDataFile}\n`
+      + '       这通常是打包/上传时把 packages/shared/data/*.json 换成了占位文件。\n'
+      + '       请用真实数据替换后重试；确实不想导入内置数据时用 DISABLE_SEED=1。',
+    )
+  }
+
+  const withImages = locations.filter(
+    (location) => Array.isArray(location.images) && location.images.length > 0,
+  )
+  if (!withImages.length) {
+    throw new Error(
+      `内置地图数据里没有任何带截图的点位（共 ${locations.length} 个）：${config.seedDataFile}\n`
+      + '       这样游戏一道题都抽不出来，请检查数据文件是否完整。',
+    )
+  }
+
   const before = countLocations()
   const startedAt = Date.now()
 
