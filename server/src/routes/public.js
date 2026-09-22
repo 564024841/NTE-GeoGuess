@@ -44,7 +44,16 @@ function calibration() {
 // 前端会回退到构建时内联的那份（packages/shared/data/region-positions.json）。
 function regionPositions() {
   try {
-    return readJsonFile(config.regionPositionsFile, '区域位置文件')
+    const file = readJsonFile(config.regionPositionsFile, '区域位置文件')
+    // 文件结构是 { version, source, regions: [{ id, label, x, y }] }，
+    // 下发给前端的是 regions 数组（两个前端都按数组消费）。
+    const regions = Array.isArray(file?.regions) ? file.regions : []
+    return regions.filter((region) => (
+      region
+      && region.label
+      && Number.isFinite(Number(region.x))
+      && Number.isFinite(Number(region.y))
+    ))
   } catch {
     return []
   }

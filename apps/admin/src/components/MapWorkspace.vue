@@ -16,7 +16,7 @@ import { useMap } from '../composables/useMap'
 import { useNotices } from '../composables/useNotices'
 import { useQuestionEditor } from '../composables/useQuestionEditor'
 import { useQuestionList } from '../composables/useQuestionList'
-import { createRegionResolver } from '../utils/region'
+import { createRegionInference } from '@nte-geoguess/shared/regionInference'
 import MapHud from './MapHud.vue'
 import QuestionEditorPanel from './QuestionEditorPanel.vue'
 import QuestionListPanel from './QuestionListPanel.vue'
@@ -28,6 +28,7 @@ const props = defineProps({
   index: { type: Object, required: true },
   categories: { type: Array, default: () => [] },
   stats: { type: Object, default: null },
+  regionPositions: { type: Array, default: () => [] },
   expiresAt: { type: String, default: '' },
 })
 
@@ -38,17 +39,23 @@ const { ask } = useConfirm()
 
 const tab = ref('editor')
 
-// 游戏坐标 → 标定像素 → 九宫格区域。
-// 区域清单与题量来自 shared 的 buildPuzzleIndex，网格边界由 utils/region 复算（原因见该文件）。
-const regionResolver = createRegionResolver(props.index)
+// 按坐标推断区域：规则与 scripts/classify-regions.mjs 完全同一份实现
+// （packages/shared/src/regionInference.js），所以后台出题时的自动归类与整库归类不会漂。
 const toPixel = (point) => props.geometry.gameToMapPixel(point)
-const regionOf = (point) => (point ? regionResolver(toPixel(point)) : null)
+const regionInference = createRegionInference({ geometry: props.geometry })
+const inferRegion = (point) => (point ? regionInference.infer(point) : null)
+// 区域名 → 主题色（分类表里就带着色），给地图上的区域标记上色
+const regionColors = computed(() => Object.fromEntries(
+  (props.categories || [])
+    .filter((category) => category.label && category.color)
+    .map((category) => [category.label, category.color]),
+))
 
 const categoriesRef = computed(() => props.categories)
 
 const editor = useQuestionEditor({
   categories: categoriesRef,
-  regionResolver: regionOf,
+  regionInference,
   onChanged: handleQuestionsChanged,
 })
 
@@ -109,6 +116,8 @@ const { mapElement, zoom, cursors, focusPoint, shiftZoom, resetView } = useMap({
   geometry: props.geometry,
   mapConfig: props.mapConfig,
   pinPoint,
+  regionPositions: computed(() => props.regionPositions),
+  regionColors,
   onMapClick: handleMapClick,
 })
 
@@ -184,7 +193,7 @@ onMounted(async () => {
       getList: () => list.items.value.map((item) => ({ id: item.id, name: item.name, x: item.x, y: item.y })),
       getListTotal: () => list.total.value,
       getCategories: () => categoryItems.value.map((item) => ({ id: item.id, label: item.label, count: item.count })),
-      regionOf,
+      inferRegion,
       toPixel,
       // 本次运行生效的请求超时，自查脚本据此决定等多久（见 scripts/selfcheck.mjs）
       apiTimeoutMs: DEFAULT_TIMEOUT_MS,
@@ -283,7 +292,7 @@ const questionTotalLabel = computed(() => {
         :draft-missing="draftMissing"
         :category-options="categoryOptions"
         :to-pixel="toPixel"
-        :region-of="regionOf"
+        :infer-region="inferRegion"
         @upload="setImage"
         @clear-image="clearImage"
         @save="savePending"

@@ -16,6 +16,8 @@ export function useBootstrap() {
   const mapConfig = shallowRef(null)
   const stats = shallowRef(null)
   const categories = shallowRef([])
+  // 区域名标签的落点（标定像素）：地图上标出六块城区 + 薄暮区，出题时有个方位参照
+  const regionPositions = shallowRef([])
   // geometry / index 里是上千个点位对象，用 shallowRef 避免 Vue 逐层做响应式代理
   const geometry = shallowRef(null)
   const index = shallowRef(null)
@@ -36,6 +38,11 @@ export function useBootstrap() {
       mapConfig.value = payload.map
       stats.value = payload.stats || null
       categories.value = payload.categories || []
+      // 服务端下发的是数组；老版本服务端给的是整个文件对象，这里两种都认
+      const positions = payload.regionPositions
+      regionPositions.value = Array.isArray(positions)
+        ? positions
+        : (Array.isArray(positions?.regions) ? positions.regions : [])
       geometry.value = nextGeometry
       index.value = nextIndex
       status.value = 'ready'
@@ -55,5 +62,5 @@ export function useBootstrap() {
     triggerRef(categories)
   }
 
-  return { status, error, mapConfig, stats, categories, geometry, index, load, addCategory }
+  return { status, error, mapConfig, stats, categories, regionPositions, geometry, index, load, addCategory }
 }

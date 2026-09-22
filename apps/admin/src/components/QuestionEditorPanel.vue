@@ -19,9 +19,9 @@ const props = defineProps({
   draftReady: { type: Boolean, default: false },
   draftMissing: { type: Array, default: () => [] },
   categoryOptions: { type: Array, default: () => [] },
-  // 由工作台注入：游戏坐标 → 标定像素 / 参考区域（都来自 shared 的 geometry 与题库索引）
+  // 由工作台注入：游戏坐标 → 标定像素 / 区域推断（都来自 shared）
   toPixel: { type: Function, required: true },
-  regionOf: { type: Function, required: true },
+  inferRegion: { type: Function, required: true },
 })
 
 const emit = defineEmits([
@@ -48,14 +48,21 @@ const previewUrl = computed(() => {
 })
 
 const draftPixel = computed(() => (props.draft.point ? props.toPixel(props.draft.point) : null))
-const draftRegion = computed(() => (props.draft.point ? props.regionOf(props.draft.point) : null))
+// 优先用点选时算好的那份（draft.autoRegion），没有就现算
+const draftRegion = computed(() => (
+  props.draft.autoRegion || (props.draft.point ? props.inferRegion(props.draft.point) : null)
+))
+// 「区域」这一栏是不是按坐标自动填的（编辑已有题目时如果库里的值和推断值不同，就不标自动）
+const districtIsAuto = computed(() => Boolean(
+  props.draft.autoRegion && props.draft.district === props.draft.autoRegion.label,
+))
 
-// 清单里每题的展示信息：序号、底图像素、参考区域都由这里补齐，模板保持干净
+// 清单里每题的展示信息：序号、底图像素、自动判定区域都由这里补齐，模板保持干净
 const pendingWithMeta = computed(() => props.pending.map((item, index) => ({
   ...item,
   position: index + 1,
   pixel: props.toPixel(item.point),
-  region: props.regionOf(item.point),
+  region: props.inferRegion(item.point),
 })))
 
 function emitUpload(file) {
@@ -77,19 +84,25 @@ function openFilePicker() {
   fileInput.value?.click()
 }
 
-// 参考区域 = 离落点最近的已标注区域。这只是提示，不是权威归属，
-// 所以文案里说明「最近」，并在悬停里给出距离与该区域题量。
+// 按坐标推断出来的区域：kNN 投票 + 覆盖范围规则（与整库归类同一套）。
+// 文案里如实交代可信度与依据，别让人以为这是游戏里的官方边界。
 function regionText(region) {
   if (!region) return '—'
-  return region.inside ? `${region.label}（最近）` : `${region.label}（最近，稍远）`
+  if (region.outside) return `${region.label}（覆盖之外）`
+  const percent = Math.round((region.confidence || 0) * 100)
+  return percent >= 60 ? `${region.label}（${percent}%）` : `${region.label}（${percent}%，两区交界）`
 }
 
 function regionTitle(region) {
   if (!region) return '先在地图上点选答案位置'
-  const distanceKm = (region.distance / 1000).toFixed(1)
-  return `离该落点最近的已标注区域是「${region.label}」，`
-    + `距其点位重心约 ${distanceKm}k 像素；该区域已录入 ${region.count} 个点位。`
-    + '区域边界以游戏内为准，这里只作提示。'
+  const nearest = Math.round(region.nearestDistance || 0)
+  if (region.outside) {
+    return `落点离最近的一个已知区域参照点还有 ${nearest} 标定像素（超出覆盖半径），`
+      + '按规则归入「薄暮区」。这类落点没有参照点校验，建议人工确认。'
+  }
+  return `按参照点投票得出「${region.label}」：置信度 ${Math.round((region.confidence || 0) * 100)}%，`
+    + `离最近参照点 ${nearest} 标定像素。参照点来自上游带真实区域名的点位，`
+    + '游戏里的实际边界以游戏内为准。'
 }
 </script>
 
@@ -186,7 +199,7 @@ function regionTitle(region) {
             <strong>{{ Math.round(draftPixel.pixelX) }}, {{ Math.round(draftPixel.pixelY) }}</strong>
           </div>
           <div>
-            <span>参考区域</span>
+            <span>自动判定区域</span>
             <strong :title="regionTitle(draftRegion)">{{ regionText(draftRegion) }}</strong>
           </div>
         </template>
@@ -196,7 +209,7 @@ function regionTitle(region) {
         </p>
       </div>
       <p class="panel-note panel-note--tight">
-        参考区域 = 离落点最近的已标注区域，只作提示；题目归属由下面选的「分类」决定。
+        点选后按坐标自动定区域：会填好下面的「区域」，并把「分类」切到对应区域分类（都可以手动改）。
       </p>
     </section>
 
@@ -217,7 +230,7 @@ function regionTitle(region) {
 
       <div class="field-row">
         <label class="field">
-          <span>分类</span>
+          <span>分类{{ districtIsAuto && !isEditing ? '（按坐标自动）' : '' }}</span>
           <select v-model="draft.categoryId" data-testid="field-category">
             <option v-for="category in categoryOptions" :key="category.id" :value="category.id">
               {{ category.label }}（{{ category.group || '未分组' }}）
@@ -226,7 +239,7 @@ function regionTitle(region) {
         </label>
 
         <label class="field">
-          <span>区域（可选）</span>
+          <span>区域{{ districtIsAuto ? '（按坐标自动，可改）' : '（可选）' }}</span>
           <input
             v-model="draft.district"
             type="text"

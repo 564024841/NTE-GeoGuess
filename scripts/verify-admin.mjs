@@ -240,7 +240,9 @@ try {
   })
   check(answerMeta.isSet, '地图点选后答案位置已设定')
   check(answerMeta.values.length >= 3,
-    `回显游戏坐标 / 底图像素 / 参考区域 => ${answerMeta.values.join(' | ')}`)
+    `回显游戏坐标 / 底图像素 / 自动判定区域 => ${answerMeta.values.join(' | ')}`)
+  check(Boolean(answerMeta.values[2]) && answerMeta.values[2] !== '—',
+    `按坐标自动定区域 => ${answerMeta.values[2]}`)
 
   await page.locator('[data-testid="field-name"]').fill(NAME_A)
   check(await savePending.isEnabled(), '截图 + 位置齐备后可保存')

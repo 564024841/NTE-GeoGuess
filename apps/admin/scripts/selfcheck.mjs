@@ -356,8 +356,35 @@ try {
       await page.waitForTimeout(500)
 
       const answerText = await page.locator('[data-testid="answer-slot"]').innerText()
-      check(answerText.includes('游戏坐标') && answerText.includes('参考区域'),
-        `地图点选后回显坐标与区域：${answerText.replace(/\s+/g, ' ').slice(0, 70)}`)
+      check(answerText.includes('游戏坐标') && answerText.includes('自动判定区域'),
+        `地图点选后回显坐标与自动判定区域：${answerText.replace(/\s+/g, ' ').slice(0, 70)}`)
+
+      // 按坐标自动分类：区域文本框应等于推断结果，分类下拉应切到对应的区域分类
+      const autoClass = await page.evaluate(() => {
+        const admin = window.__NTE_ADMIN__
+        const draft = admin?.getDraft?.()
+        const inferred = draft?.point ? admin.inferRegion(draft.point) : null
+        return {
+          district: draft?.district || '',
+          category: draft?.categoryId || '',
+          select: document.querySelector('[data-testid="field-category"]')?.value || '',
+          inferredLabel: inferred?.label || '',
+          confidence: Number(inferred?.confidence ?? 0),
+          outside: Boolean(inferred?.outside),
+        }
+      })
+      check(autoClass.district !== '' && autoClass.district === autoClass.inferredLabel,
+        `按坐标自动填区域：${autoClass.district}（置信度 ${autoClass.confidence.toFixed(2)}${autoClass.outside ? '，覆盖之外' : ''}）`)
+      check(autoClass.category.startsWith('region-') && autoClass.category === autoClass.select,
+        `分类自动切到区域分类：${autoClass.category}（下拉里也是它）`)
+
+      // 区域名标签：初始 -3（整图缩略）时收起避免糊成一团，放大一级后应出现
+      await page.evaluate(() => window.__NTE_ADMIN__?.shiftZoom?.(1))
+      await page.waitForTimeout(500)
+      const regionLabels = await page.locator('.region-label').allInnerTexts()
+      check(regionLabels.length >= 3, `地图上画出了区域名标签（${regionLabels.length} 个：${regionLabels.slice(0, 3).join('、')}）`)
+      await page.evaluate(() => window.__NTE_ADMIN__?.shiftZoom?.(-1))
+      await page.waitForTimeout(300)
 
       await page.fill('[data-testid="field-name"]', questionName)
       await shot(page, 'admin-03-draft.png')

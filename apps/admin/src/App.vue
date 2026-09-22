@@ -29,6 +29,7 @@ const {
   mapConfig,
   stats,
   categories,
+  regionPositions,
   geometry,
   index,
   load: loadBootstrap,
@@ -74,6 +75,7 @@ function handleCategoryCreated(category) {
         :map-config="mapConfig"
         :index="index"
         :categories="categories"
+        :region-positions="regionPositions"
         :stats="stats"
         :expires-at="authState.expiresAt || ''"
         @logout="logout"

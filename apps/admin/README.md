@@ -43,8 +43,8 @@ npm run preview --workspace apps/admin  # http://127.0.0.1:4175
 | 功能 | 说明 | 用到的接口 |
 | --- | --- | --- |
 | 登录 / 退出 | 启动先探测会话；失败显示「密码不正确（还可尝试 N 次）」，限流显示还要等多少秒 | `GET /api/admin/session`、`POST /api/admin/login`、`POST /api/admin/logout` |
-| 地图选点 | 底图参数与游戏站完全一致（CRS.Simple、瓦片 512、minZoom -3、maxZoom 1）；点地图即设定答案位置，面板回显**游戏坐标 / 底图像素 / 参考区域** | `GET /api/bootstrap` |
-| 新建题目 | 点击或拖拽上传截图（PNG/JPEG/WebP/GIF/AVIF，≤ 8 MB）、填名称/分类/区域/备注、点选坐标 → 「保存到待提交清单」，可连续加多题 → 一次性提交 | `POST /api/admin/questions/batch` |
+| 地图选点 | 底图参数与游戏站完全一致（CRS.Simple、瓦片 512、minZoom -3、maxZoom 1），并画出**区域名标签**（向阳岛 / 米格尔区 / 薄暮区…）；点地图即设定答案位置，面板回显**游戏坐标 / 底图像素 / 自动判定区域** | `GET /api/bootstrap` |
+| 新建题目 | 点击或拖拽上传截图（PNG/JPEG/WebP/GIF/AVIF，≤ 8 MB）、填名称/备注、点选坐标 → **按坐标自动定区域**（写好「区域」并把「分类」切到对应区域分类，均可手动改）→ 「保存到待提交清单」，可连续加多题 → 一次性提交 | `POST /api/admin/questions/batch` |
 | 题库列表 | 关键字搜索（名称/ID，300ms 防抖）、按来源筛选（后台题库 / 内置点位 / 全部）、分页；每项显示缩略图、名称、坐标、分类、来源、创建时间 | `GET /api/admin/questions` |
 | 编辑题目 | 改文字字段、换截图、重新在地图上点选坐标；「保存修改」整体替换 `images` | `PUT /api/admin/questions/:id` |
 | 删除题目 | 二次确认后删除，被删题目独有的截图由服务端一并清理 | `DELETE /api/admin/questions/:id` |
@@ -54,8 +54,13 @@ npm run preview --workspace apps/admin  # http://127.0.0.1:4175
 
 - **地图上不画任何题库点位**（和游戏站一致）：后台地图一旦显示点位就等于把答案提前摆在眼前。
   地图上只会出现「当前正在编辑的那一个答案点」。
-- **参考区域**由 `buildPuzzleIndex` 的九宫格给出。它的网格边界没有对外暴露，
-  所以 `src/utils/region.js` 用同一套常量复算了边界，再回 `index.regions` 取标签与题量。
+- **区域名标签**来自 `/api/bootstrap` 的 `regionPositions`（服务端把 `data-json/region-positions.json`
+  的 `regions` 数组下发）；缩到 `-3`（整图缩略）时整层收起，避免七行字糊在一起。
+- **自动区域分类**用 `@nte-geoguess/shared/regionInference`：拿 400 个上游带真实区域名的点位做
+  kNN 投票（k=7、反距离加权；离最近参照点超过 1000 标定像素的归「薄暮区」）。
+  和 `scripts/classify-regions.mjs` 是同一份实现，参照点也同一份
+  （`packages/shared/data/region-reference.json`），所以「后台出一题」与「整库归类」不会各说各话。
+  面板上同时显示置信度，两区交界（<60%）会明确标出来。
 - **提交结果持久展示**：批量提交后即使清单清空，面板底部仍保留「成功 N 题 / 失败 N 题」
   与 `problems[].message`；批量接口始终返回 200，部分失败也走这条路显示。
 - 所有失败都有可见提示：编辑器内是 `status-banner`，其它操作走右上角的提示条堆栈，
@@ -65,7 +70,7 @@ npm run preview --workspace apps/admin  # http://127.0.0.1:4175
 
 ## 和游戏站、服务端的关系
 
-- **共享逻辑**：坐标换算（`createGeometry`）、题库索引与九宫格（`buildPuzzleIndex`）、
+- **共享逻辑**：坐标换算（`createGeometry`）、题库索引与区域推断（`buildPuzzleIndex` / `regionInference`）、
   评分与格式化、图片路径与 MIME 白名单（`resolveImageUrl` / `isSupportedImageType` 等）
   全部 `import ... from '@nte-geoguess/shared'`，两端不各写一份。
 - **不打包地图快照**：`@nte-geoguess/shared/seed`（700 KB 的 `map-data.json`）只给服务端用，
@@ -89,7 +94,7 @@ apps/admin/
 │   ├── App.vue             登录态 + 启动数据的 gate：登录页 / 加载页 / 错误页 / 工作台
 │   ├── api.js              API 客户端（credentials、统一错误、超时、dataUrl 读取）
 │   ├── styles.css          暗色主题（与游戏站同源，另加后台专用样式）
-│   ├── utils/              leaflet 入口、区域解析
+│   ├── utils/              leaflet 入口
 │   ├── composables/        useAuth / useBootstrap / useMap / useQuestionEditor /
 │   │                       useQuestionList / useCategories / useNotices / useConfirm
 │   └── components/         LoginView / MapWorkspace / QuestionEditorPanel /

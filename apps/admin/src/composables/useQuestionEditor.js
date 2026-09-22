@@ -35,6 +35,8 @@ function emptyDraft() {
     imageName: '',
     existingImages: [], // 编辑时服务端已有的截图路径
     point: null, // 游戏真实坐标 { x, y }
+    // 按落点自动分类的结果（展示用）：{ label, confidence, nearestDistance, outside, source }
+    autoRegion: null,
   }
 }
 
@@ -42,7 +44,7 @@ function roundCoord(value) {
   return Number(Number(value).toFixed(3))
 }
 
-export function useQuestionEditor({ categories, regionResolver, onChanged }) {
+export function useQuestionEditor({ categories, regionInference, onChanged }) {
   const draft = reactive(emptyDraft())
   const pending = ref([])
   // 最近一次批量提交的持久记录：pending 清空后仍能看到「刚才入库了什么、哪几题失败」
@@ -67,9 +69,10 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     return missing
   })
 
-  // 「底图像素 + 参考区域」是给后台自查坐标链路用的，和游戏站编辑页展示同样的三项
+  // 落点对应的区域推断结果。draft.autoRegion 是点选时算好的那一份，
+  // 这里优先读它（编辑已有题目时 point 是从服务端带回来的，还没点过地图，就现算一次）。
   const draftRegion = computed(() => (
-    draft.point && regionResolver ? regionResolver(draft.point) : null
+    draft.autoRegion || (draft.point && regionInference ? regionInference.infer(draft.point) : null)
   ))
 
   function setStatus(kind, message) {
@@ -124,7 +127,30 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
   function setPoint(point) {
     if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return
     draft.point = { x: Number(point.x), y: Number(point.y) }
-    syncDefaultCategory()
+    autoClassify()
+  }
+
+  // 按答案落点自动定区域：填「区域」文本框，并把分类切到对应的区域分类
+  // （用户之后可以手动改，改完只要不再点地图就不会被覆盖）。
+  function autoClassify() {
+    if (!draft.point || !regionInference) {
+      syncDefaultCategory()
+      return
+    }
+
+    const inferred = regionInference.infer(draft.point)
+    if (!inferred) {
+      syncDefaultCategory()
+      return
+    }
+
+    draft.autoRegion = inferred
+    draft.district = inferred.label
+
+    // 区域名 → 分类 id：分类表里的区域分类标签与区域名同名（米格尔区 / 薄暮区 …）
+    const match = categoryOptions.value.find((category) => category.label === inferred.label)
+    if (match) draft.categoryId = match.id
+    else syncDefaultCategory()
   }
 
   // 草稿 → 契约里的题目请求体。
@@ -254,6 +280,9 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
         ? { x: Number(item.x), y: Number(item.y) }
         : null,
     })
+    // 已有题目的区域以库里存的为准，但把「按坐标推断的结果」也算出来，
+    // 面板上会显示它，方便发现「这题的归属和坐标对不上」
+    if (draft.point && regionInference) draft.autoRegion = regionInference.infer(draft.point)
     setStatus('idle', `正在编辑：${item.name || item.id}`)
   }
 
@@ -300,6 +329,7 @@ export function useQuestionEditor({ categories, regionResolver, onChanged }) {
     setImage,
     clearImage,
     setPoint,
+    autoClassify,
     syncDefaultCategory,
     savePending,
     removePending,
