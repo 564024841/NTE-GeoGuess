@@ -147,8 +147,8 @@ sudo chown -R 1000:1000 data tiles data-json
 ```
 
 > 如果你更习惯把数据放在 `/www/wwwroot/nte-geoguess/` 下（不和宝塔自己的数据区混在一起），
-> 把上面三行的相对路径换成绝对路径即可，例如
-> `- /www/wwwroot/nte-geoguess/data:/data`。
+> 把上面三个 `*_HOST_DIR` 换成那边的绝对路径即可，例如
+> `DATA_HOST_DIR=/www/wwwroot/nte-geoguess/data`（tiles、data-json 同理）。
 > **不要**把这些目录放到 `/www/server/panel/data` 里手工 chmod/chown ——
 > 那是宝塔自己的数据区（`600 root`），权限被改坏会连带多个服务起不来。
 
