@@ -23,6 +23,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 底图瓦片不在本仓库（独立仓库、无许可证声明），构建时拉一次打进镜像，
+      # 这样部署端不需要再准备瓦片目录。Dockerfile 的 tiles 阶段会把它放进 /srv/tiles。
+      - name: Fetch map tiles (baked into the image)
+        run: |
+          git clone --depth 1 https://github.com/Maa-NTE/MapSource.git MapSource
+          z0=$(ls MapSource/tiles/0 | wc -l)
+          total=$(find MapSource/tiles -name '*.jpg' | wc -l)
+          echo "z=0 的 x 目录：$z0 ；瓦片总数：$total"
+          test "$z0" -eq 51
+          test "$total" -ge 3000
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

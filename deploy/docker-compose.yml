@@ -31,10 +31,6 @@ services:
 
       TILES_DIR: /srv/tiles
       REQUIRE_TILES: ${REQUIRE_TILES:-1}
-      # 镜像里不含瓦片；默认从宿主目录只读挂载（见下面 volumes）。
-      # 若不想在宿主准备瓦片目录，可设 TILES_AUTO_FETCH=1，并把 /srv/tiles 换成可写卷。
-      TILES_AUTO_FETCH: ${TILES_AUTO_FETCH:-0}
-      MAPSOURCE_REPO: ${MAPSOURCE_REPO:-Maa-NTE/MapSource}
       SEED_IMAGES_DIR: /srv/seed-images/locations
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: ${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}
@@ -44,5 +40,6 @@ services:
     volumes:
       # SQLite 与后台上传截图持久化
       - ${DATA_HOST_DIR:-./data}:/data
-      # 底图瓦片（只读挂载；镜像里不含瓦片）
-      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
+      # 底图瓦片已经打进镜像（CI 构建时拉取并烘焙），这里不需要挂载。
+      # 想用宿主目录覆盖镜像里的瓦片时，取消下一行注释即可：
+      # - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro

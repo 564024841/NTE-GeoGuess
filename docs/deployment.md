@@ -1,7 +1,7 @@
 # 部署指南
 
 目标形态：**一个容器**同时提供游戏站（`/`）、后台站（`/admin/`）、API 与素材，
-外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片不进镜像，只读挂载宿主目录。
+外层用 nginx（宝塔即可）做域名 + HTTPS 反代。底图瓦片**已打进镜像**（CI 构建时拉取烘焙）。
 
 ```
 浏览器 ──▶ nginx（域名 + HTTPS，站点内 proxy_cache off）
@@ -9,7 +9,7 @@
                                        ├─ /              游戏站（STATIC_DIR）
                                        ├─ /admin/         后台站（ADMIN_STATIC_DIR）
                                        ├─ /api /images /icons
-                                       └─ /mapsource-tiles ──▶ /srv/tiles（宿主只读挂载）
+                                       └─ /mapsource-tiles ──▶ /srv/tiles（镜像内置瓦片）
                                     数据：/data（宿主目录挂载：SQLite + 上传截图）
 ```
 
@@ -46,18 +46,21 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 生产建议设 `REQUIRE_TILES=1`（compose 默认已开）：瓦片缺失或不完整时服务端**拒绝启动**，
 避免「服务起来了但底图全黑」这种难排查的状态。
 
-### 镜像里的瓦片：两种做法
+### 镜像里的瓦片
 
-镜像**默认不含瓦片**（CI 的构建上下文里没有 `MapSource/`，它是 gitignore 的独立仓库），
-`/srv/tiles` 是空目录。两种补法：
+底图瓦片**已经打进镜像**：GitHub Actions 在构建前会从 `Maa-NTE/MapSource` 拉一次 `tiles/`
+（约 30MB / 3516 张），`Dockerfile` 的 tiles 阶段把它放进 `/srv/tiles`，并校验
+`z=0` 有 51 个 x 目录、总数不少于 3000 张——校验不过就**不会发镜像**，避免发布"底图全黑"的版本。
 
-| 做法 | 怎么用 | 代价 |
-| --- | --- | --- |
-| **宿主目录挂载**（默认） | compose 里 `TILES_HOST_DIR=<宿主瓦片目录>`，只读挂到 `/srv/tiles` | 需要先在宿主上拉一次瓦片（`npm run tiles:fetch`） |
-| **容器首次启动自动拉取** | `.env` 里设 `TILES_AUTO_FETCH=1`，并把 compose 里 `/srv/tiles` 的挂载换成一个可写卷 | 首次启动需要外网（约 30MB，只拉一次）；镜像保持精简 |
+因此部署端不需要准备瓦片目录。想用宿主目录里的瓦片覆盖镜像内容时，
+取消 `deploy/docker-compose.yml` 里那行只读挂载并设 `TILES_HOST_DIR` 即可：
 
-自动拉取的实现见 `deploy/docker-entrypoint.sh`（默认关闭，`TILES_AUTO_FETCH=1` 才触发；
-可通过 `MAPSOURCE_REPO` / `MAPSOURCE_BRANCH` 指向内网镜像）。
+```yaml
+      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
+```
+
+> 注意：`Maa-NTE/MapSource` 未声明许可证（默认"保留所有权利"），瓦片随镜像分发等同于再分发游戏底图。
+> 如果你的 GHCR 包是 public，建议改成 private，或改用宿主挂载（`TILES_HOST_DIR`）避免分发。
 
 ---
 
@@ -68,7 +71,7 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 git clone https://github.com/564024841/NTE-GeoGuess.git /www/wwwroot/nte-geoguess/app
 cd /www/wwwroot/nte-geoguess/app
 
-# 2) 准备环境文件（至少改 ADMIN_PASSWORD）
+# 2) 准备环境文件（至少改 ADMIN_PASSWORD；瓦片已内置，不用管 TILES_*）
 cp deploy/.env.example deploy/.env
 
 # 3) 数据目录要能被容器内的 node 用户（uid 1000）写入
@@ -91,7 +94,6 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs -f --tai
 | `ADMIN_PASSWORD` | 无（必填） | 后台登录密码；留空则后台接口禁用 |
 | `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 只监听本机交给 nginx 反代；想直接暴露就设 `0.0.0.0:8080` |
 | `DATA_HOST_DIR` | `./data` | SQLite + 上传截图，务必持久化并备份 |
-| `TILES_HOST_DIR` | `../../MapSource/tiles` | 瓦片目录，只读挂载到容器 `/srv/tiles` |
 | `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
 
 首次启动会自动把内置题库导入 SQLite，日志里出现

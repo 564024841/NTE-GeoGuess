@@ -58,7 +58,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl tini \
+  && apt-get install -y --no-install-recommends ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/node_modules node_modules
@@ -78,12 +78,8 @@ COPY apps/game/public/icons /srv/icons
 # 可选内置瓦片（上下文存在即复制，不存在也不报错）
 COPY --from=tiles /tiles /srv/tiles
 
-# 入口脚本：支持首次启动自动拉取瓦片（TILES_AUTO_FETCH=1）
-COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-
 RUN mkdir -p /data/uploads /srv/tiles \
-  && chown -R node:node /data /srv \
-  && chmod +x /usr/local/bin/docker-entrypoint.sh
+  && chown -R node:node /data /srv
 
 USER node
 
@@ -92,5 +88,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server/src/index.js"]

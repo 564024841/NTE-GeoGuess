@@ -195,8 +195,10 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 | --- | --- | --- |
 | `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 默认只监听本机，交给宝塔 nginx 反代；想直接暴露就设成 `0.0.0.0:8080` |
 | `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图，务必持久化并备份 |
-| `TILES_HOST_DIR` | `../../MapSource/tiles` | 底图瓦片目录，只读挂载到容器 `/srv/tiles` |
 | `ADMIN_PASSWORD` | 无 | 后台登录密码；留空则后台接口禁用 |
+
+底图瓦片**已经打进镜像**（CI 构建时从 `Maa-NTE/MapSource` 拉取并烘焙到 `/srv/tiles`，约 30MB），
+所以部署端不需要准备瓦片目录；想用宿主目录覆盖时，取消 compose 里那行只读挂载即可。
 
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
