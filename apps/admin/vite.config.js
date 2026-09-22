@@ -21,8 +21,10 @@ const proxy = {
   '/mapsource-tiles': { target: API_TARGET, changeOrigin: true },
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [vue()],
+  // 单镜像部署时后台挂在 /admin/ 子路径下，开发环境保持根路径便于调试
+  base: command === 'build' ? '/admin/' : '/',
   server: {
     host: '127.0.0.1',
     port: 5175,
@@ -33,4 +35,4 @@ export default defineConfig({
     port: 4175,
     proxy,
   },
-})
+}))
