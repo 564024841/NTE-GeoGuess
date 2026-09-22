@@ -33,6 +33,7 @@
     "migrate:regions": "node scripts/migrate-regions.mjs",
     "add:region-twilight": "node scripts/add-region-twilight.mjs",
     "classify:regions": "node scripts/classify-regions.mjs",
+    "region:preview": "node scripts/region-map-preview.mjs",
     "remove:imageless": "node scripts/remove-imageless.mjs",
     "tiles:verify": "node scripts/tiles.mjs verify",
     "tiles:fetch": "node scripts/tiles.mjs fetch",

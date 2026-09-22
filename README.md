@@ -274,6 +274,11 @@ compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 w
    - `scripts/classify-regions.py`：同一件事的 **Python 存档版**（线上那次归类就是它跑的），
      读同一份参照点、同样的参数，产物与 mjs 版逐字节一致。规则只有 `regionInference.js` 一处，
      这个文件留作留痕/对照，别只改它。
+   - `npm run region:preview`：把「区域边界 + 400 个参照点 + 题目的归属」画成一张地图
+     用来肉眼复核（不一致的题画红圈）。需要先有瓦片（`npm run tiles:fetch`，或 `--tiles=` 指定），
+     加 `--png` 顺便渲染 PNG（需要 ImageMagick）。
+   - 两个分类脚本都支持 `--report=<file>`：把逐题明细（旧/新归属、置信度、离最近参照点距离、
+     像素与游戏坐标）落成 JSON，方便逐条核对或存档。
    - `npm run remove:imageless`：删除所有无截图点位（出不了题的地图标记）。
    除 `remove:imageless` 外都会先备份到 `data/backups/`；`remove:imageless` 按使用者要求
    不做自动备份，但会把删掉的点位完整写进 `data/removed-imageless-*.json` 以便恢复。

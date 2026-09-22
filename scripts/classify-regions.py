@@ -10,12 +10,15 @@
 #
 # 保留这支 Python 版只为留痕与对照：同样的输入下，它和 mjs 版的结果**逐字节一致**
 # （可自行验证：`python3 scripts/classify-regions.py --apply --out=/tmp/x.json` 后再比 md5）。
+# 唯一差别：`--report` 出的 pixel 字段偶尔会差 1 像素 —— 这份 py 自己解仿射，和 JS 的 solveAffine
+# 在浮点末位上不同；归属（from/to/reason）两者完全一致。
 # 要改规则/调参，请改 `packages/shared/src/regionInference.js`，别只改这里。
 #
 # 用法：
 #   python3 scripts/classify-regions.py                 # 演练：只打印会改什么
 #   python3 scripts/classify-regions.py --apply         # 写回 packages/shared/data/map-data.json
 #   python3 scripts/classify-regions.py --out=/tmp/new-map-data.json   # 写到别处（配合 --apply）
+#   python3 scripts/classify-regions.py --report=/tmp/rows.json        # 逐题明细落盘
 #
 # 方法：游戏坐标 → 标定像素（3 点解 2×3 仿射），取最近 K 个参照点做反距离加权投票；
 #       离最近参照点超过 MAX_DIST 标定像素的，说明落在参照点覆盖之外（地图西北那块飞地），归「薄暮区」。
@@ -36,6 +39,7 @@ def option(name, fallback):
 
 APPLY = '--apply' in sys.argv
 OUT = option('out', SEED)
+REPORT = option('report', '')
 K = int(option('k', 7))
 MAX_DIST = float(option('max-dist', 1000))   # 标定像素（整图宽 13056）
 TWILIGHT = '薄暮区'
@@ -96,11 +100,13 @@ for location in data['locations']:
     px, py = loc(location['x'], location['y'])
     district = (location.get('district') or '').strip()
     if district and district != PLACEHOLDER and district in known:
-        region, conf, d0 = district, 1.0, 0.0
+        region, conf, d0, reason = district, 1.0, 0.0, 'district'
     else:
         region, conf, d0 = knn(px, py)
+        reason = 'knn'
         if d0 > MAX_DIST:
             region = TWILIGHT
+            reason = 'outside-coverage'
     old_id = (location.get('types') or ['?'])[0]
     item = dict(location)
     item['types'] = [LABEL_TO_ID[region]]
@@ -108,8 +114,10 @@ for location in data['locations']:
     item['tags'] = [tag for tag in (location.get('tags') or [])
                     if tag not in ('unlabeled', UNLABELED, *known, TWILIGHT)] + [region]
     out.append(item)
-    rows.append({'id': location['id'], 'oldLabel': REGION_LABEL.get(old_id, old_id), 'new': region,
-                 'conf': conf, 'd0': d0})
+    rows.append({'id': location['id'], 'name': location.get('name', ''),
+                 'oldLabel': REGION_LABEL.get(old_id, old_id), 'new': region,
+                 'conf': conf, 'd0': d0, 'px': px, 'py': py,
+                 'x': location['x'], 'y': location['y'], 'reason': reason})
 
 print(f"题数 {len(rows)}  参照点 {len(ref)}  k={K}  覆盖半径 {MAX_DIST:.0f}")
 print('新分布:', dict(Counter(r['new'] for r in rows).most_common()))
@@ -122,6 +130,34 @@ print(f"参照点覆盖之外 → {TWILIGHT} {len(far)} 个：")
 for r in sorted(far, key=lambda r: r['d0']):
     print(f"   {r['id']:26s} 最近参照点={r['d0']:.0f}px")
 print(f"归属发生变化 {len([r for r in rows if r['oldLabel'] != r['new']])} 个")
+
+if REPORT:
+    report = {
+        'generatedAt': __import__('datetime').datetime.now().astimezone().isoformat(timespec='seconds'),
+        'seedFile': SEED,
+        'params': {'k': K, 'maxDistance': MAX_DIST, 'outsideLabel': TWILIGHT},
+        'referenceCount': len(ref),
+        'summary': {
+            'total': len(rows),
+            'changed': len([r for r in rows if r['oldLabel'] != r['new']]),
+            'byRegion': dict(Counter(r['new'] for r in rows).most_common()),
+            'borderline': [r['id'] for r in sorted(low, key=lambda r: r['conf'])],
+            'outsideCoverage': [r['id'] for r in sorted(far, key=lambda r: r['d0'])],
+            'fromDistrict': [r['id'] for r in rows if r['reason'] == 'district'],
+        },
+        'rows': [{
+            'id': r['id'], 'name': r.get('name', ''), 'from': r['oldLabel'], 'to': r['new'],
+            'reason': r['reason'],
+            'confidence': round(r['conf'], 4),
+            'nearestReferenceDistance': round(r['d0']),
+            'pixel': [round(r['px']), round(r['py'])],
+            'game': [r['x'], r['y']],
+        } for r in rows],
+    }
+    with open(REPORT, 'w') as handle:
+        json.dump(report, handle, ensure_ascii=False, indent=2)
+        handle.write('\n')
+    print(f'\n[报告] {REPORT}（{len(rows)} 行逐题明细）')
 
 if not APPLY:
     print('\n（演练模式，未写入。加 --apply 执行）')

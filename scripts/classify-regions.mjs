@@ -19,6 +19,7 @@
 // 用法：
 //   node scripts/classify-regions.mjs                  # 演练：只打印会改什么
 //   node scripts/classify-regions.mjs --cv             # 顺带打印参考点自检准确率
+//   node scripts/classify-regions.mjs --report=out.json # 把逐题明细（旧/新归属、置信度、最近参照点距离）落盘
 //   node scripts/classify-regions.mjs --apply          # 执行（先备份，再写盘 + 同步数据库）
 //   node scripts/classify-regions.mjs --k=9 --max-dist=1200 --apply   # 调参
 //
@@ -39,6 +40,14 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'test-admin-pw'
 
 const APPLY = process.argv.includes('--apply')
 const CROSS_VALIDATE = process.argv.includes('--cv')
+
+// --report 或 --report=<路径>：把逐题明细写成 JSON（不写盘也能出报告，方便复核）
+const REPORT = (() => {
+  const withValue = process.argv.find((arg) => arg.startsWith('--report='))
+  if (withValue) return withValue.slice('--report='.length) || path.join(ROOT, 'data/region-report.json')
+  if (process.argv.includes('--report')) return path.join(ROOT, 'data/region-report.json')
+  return null
+})()
 
 const PLACEHOLDER = '全地图'
 const UNLABELED_LABEL = '未标注'
@@ -111,6 +120,46 @@ const borderline = rows.filter((row) => row.result.reason === 'knn' && row.resul
 const outside = rows.filter((row) => row.result.reason === 'outside-coverage')
 const fromDistrict = rows.filter((row) => row.result.reason === 'district')
 
+// 逐题明细：哪道题、原来归哪、现在归哪、凭什么（置信度 / 离最近参照点多远 / 是不是覆盖之外）
+function writeReport() {
+  if (!REPORT) return
+  const report = {
+    generatedAt: new Date().toISOString(),
+    seedFile: path.relative(ROOT, SEED_FILE),
+    params: { k: K, maxDistance: MAX_DIST, outsideLabel: inference.outsideLabel },
+    referenceCount: inference.referenceCount,
+    summary: {
+      total: rows.length,
+      changed: changed.length,
+      byRegion: Object.fromEntries([...distribution.entries()].sort((a, b) => b[1] - a[1])),
+      borderline: [...borderline]
+        .sort((a, b) => a.result.confidence - b.result.confidence)
+        .map((row) => row.location.id),
+      outsideCoverage: [...outside]
+        .sort((a, b) => a.result.nearestDistance - b.result.nearestDistance)
+        .map((row) => row.location.id),
+      fromDistrict: fromDistrict.map((row) => row.location.id),
+    },
+    rows: rows.map((row) => {
+      const pixel = geometry.gameToMapPixel({ x: row.location.x, y: row.location.y })
+      return {
+        id: row.location.id,
+        name: row.location.name || '',
+        from: row.currentLabel,
+        to: row.result.label,
+        reason: row.result.reason,
+        confidence: Number(row.result.confidence.toFixed(4)),
+        nearestReferenceDistance: Math.round(row.result.nearestDistance),
+        pixel: [Math.round(pixel.pixelX), Math.round(pixel.pixelY)],
+        game: [row.location.x, row.location.y],
+      }
+    }),
+  }
+  fs.mkdirSync(path.dirname(REPORT), { recursive: true })
+  fs.writeFileSync(REPORT, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
+  console.log(`\n[报告] ${REPORT}（${rows.length} 行逐题明细）`)
+}
+
 console.log('=== 按坐标分类区域 ===')
 console.log(`  参考点        ${inference.referenceCount} 个（${inference.labels.length} 个区域）`)
 console.log(`  参数          k=${K}，覆盖半径 ${MAX_DIST} 标定像素（整图宽 13056）`)
@@ -134,17 +183,19 @@ if (changed.length > 20) console.log(`    …另有 ${changed.length - 20} 个`)
 
 if (borderline.length) {
   console.log(`\n  两区交界、置信度 <0.6（建议人工复核）${borderline.length} 个：`)
-  for (const row of borderline.sort((a, b) => a.result.confidence - b.result.confidence)) {
+  for (const row of [...borderline].sort((a, b) => a.result.confidence - b.result.confidence)) {
     console.log(`    ${row.location.id.padEnd(26)} ${row.result.label}  conf=${row.result.confidence.toFixed(2)} 最近参考点 ${Math.round(row.result.nearestDistance)}px`)
   }
 }
 
 if (outside.length) {
   console.log(`\n  参考点覆盖之外 → ${inferredOutsideLabel}${outside.length} 个：`)
-  for (const row of outside.sort((a, b) => a.result.nearestDistance - b.result.nearestDistance)) {
+  for (const row of [...outside].sort((a, b) => a.result.nearestDistance - b.result.nearestDistance)) {
     console.log(`    ${row.location.id.padEnd(26)} 原属 ${row.currentLabel}，最近参考点 ${Math.round(row.result.nearestDistance)}px`)
   }
 }
+
+writeReport()
 
 if (!changed.length) {
   console.log('\n没有需要改的点位（幂等：重复执行不会写盘）。')
