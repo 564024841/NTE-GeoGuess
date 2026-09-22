@@ -6,7 +6,8 @@
 底图、坐标系统与点位数据复用自 [Maa-NTE/MaaNTE-Map](https://github.com/Maa-NTE/MaaNTE-Map)；
 抽题、评分与题库管理由本项目实现。
 
-**这是一个可上线的服务端架构**：游戏站与后台站分开构建、后台独立部署，题库与截图由服务端存储。
+**这是一个可上线的服务端架构**：游戏站与后台站分开构建，部署时由**同一个容器（单镜像）**对外提供
+（游戏站 `/`、后台站 `/admin/`、API 与素材），题库与截图由服务端存储。
 
 ---
 
@@ -180,19 +181,35 @@ npm run tiles:mirror -- <源瓦片目录> --dest <目标目录>
 
 ## 部署
 
-完整说明见 [`docs/deployment.md`](docs/deployment.md)。最短路径：
+完整说明见 [`docs/deployment.md`](docs/deployment.md)。**默认形态是单镜像**：一个容器同时提供游戏站、后台站、API 与素材，
+宝塔（或任意）nginx 只负责域名 + HTTPS 反代。镜像由 GitHub Actions 在 push 到 `main` 时自动构建并发布到 GHCR：
+`ghcr.io/564024841/nte-geoguess:latest`。最短路径：
 
 ```bash
-cp deploy/.env.example deploy/.env      # 改掉 ADMIN_PASSWORD
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+cp deploy/.env.example deploy/.env      # 至少改掉 ADMIN_PASSWORD
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env pull
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
 
-| 端口 | 用途 |
-| --- | --- |
-| 8080 | 游戏站（公开） |
-| 8081 | 后台站（nginx 已按内网网段限制） |
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `APP_BIND` / `APP_PORT` | `127.0.0.1` / `8787` | 默认只监听本机，交给宝塔 nginx 反代；想直接暴露就设成 `0.0.0.0:8080` |
+| `DATA_HOST_DIR` | `./data` | SQLite + 后台上传截图，务必持久化并备份 |
+| `TILES_HOST_DIR` | `../../MapSource/tiles` | 底图瓦片目录，只读挂载到容器 `/srv/tiles` |
+| `ADMIN_PASSWORD` | 无 | 后台登录密码；留空则后台接口禁用 |
 
-数据（SQLite + 上传截图）在 `nte-geoguess-data` 卷里；底图瓦片从宿主目录挂载。
+更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
+compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
+它会自动拉新镜像并重启，无需手工干预。
+
+> **宝塔部署要点**（都是踩过的坑）：
+> 1. 宝塔全局 nginx 开着 `proxy_cache cache_one`，重新构建后会命中旧首页 HTML、表现为「页面空白」——
+>    **该站点要加 `proxy_cache off;`**。
+> 2. 用宝塔「Node 项目（默认项目）」原生部署时它**不注入环境变量**（前置只导出 PATH，启动命令也不能写
+>    `VAR=value` 前缀），所以变量要放仓库根的 `.env`，由 `server/src/config.js` 的 `process.loadEnvFile()` 读取；
+>    用 Docker 部署没有这个问题，变量都在 compose 里。
+> 3. `better-sqlite3` 在 Node 24 上没有预编译包，原生部署请用 **Node 22**（镜像里已是 Node 22）。
+> 4. `/admin/` 建议加访问限制（Basic Auth / IP 白名单 / VPN）；HTTPS 环境下设 `COOKIE_SECURE=true`。
 
 ---
 

@@ -9,8 +9,12 @@ name: nte-geoguess
 
 services:
   app:
+    container_name: nte-geoguess
     image: ${IMAGE_NAME:-ghcr.io/564024841/nte-geoguess}:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    # 让已在运行的 watchtower 自动拉取新镜像（watchtower 需以 --label-enable 运行）
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       NODE_ENV: production
       PORT: "8080"
@@ -26,18 +30,15 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
       TILES_DIR: /srv/tiles
-      REQUIRE_TILES: ${REQUIRE_TILES:-0}
+      REQUIRE_TILES: ${REQUIRE_TILES:-1}
       SEED_IMAGES_DIR: /srv/seed-images/locations
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: ${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}
       TILE_REDIRECT_BASE: ${TILE_REDIRECT_BASE:-}
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8787}:8080"
     volumes:
       # SQLite 与后台上传截图持久化
-      - nte-geoguess-data:/data
-      # 可选：若要覆盖镜像内瓦片，可取消下一行注释并指定宿主目录
-      # - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
-
-volumes:
-  nte-geoguess-data:
+      - ${DATA_HOST_DIR:-./data}:/data
+      # 底图瓦片（只读挂载；镜像里不含瓦片）
+      - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles:ro
