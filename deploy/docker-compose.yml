@@ -31,6 +31,11 @@ services:
 
       TILES_DIR: /srv/tiles
       REQUIRE_TILES: ${REQUIRE_TILES:-1}
+      # 内容数据（题库快照 / 坐标标定 / 区域标签落点）：默认指向下面挂载进来的目录，
+      # 改数据只要覆盖宿主文件，不用重建镜像。
+      SEED_DATA_FILE: ${SEED_DATA_FILE:-/srv/data-json/map-data.json}
+      CALIBRATION_FILE: ${CALIBRATION_FILE:-/srv/data-json/navi-coordinate-calibration.json}
+      REGION_POSITIONS_FILE: ${REGION_POSITIONS_FILE:-/srv/data-json/region-positions.json}
       SEED_IMAGES_DIR: /srv/seed-images/locations
       ICONS_DIR: /srv/icons
       TILE_URL_TEMPLATE: ${TILE_URL_TEMPLATE:-/mapsource-tiles/{z}/{x}/{y}.jpg}
@@ -44,3 +49,6 @@ services:
       # 该目录要是完整瓦片集（z=-6..0 的 {z}/{x}/{y}.jpg）；以后更新瓦片，
       # 直接往这个宿主目录里覆盖文件即可，不需要重建镜像、也不需要重启容器。
       - ${TILES_HOST_DIR:-../../MapSource/tiles}:/srv/tiles
+      # 内容数据目录（只读）：map-data.json / navi-coordinate-calibration.json /
+      # region-positions.json 放这里；镜像里只带一份「最基本」的骨架。
+      - ${SHARED_DATA_HOST_DIR:-../shared-data}:/srv/data-json:ro

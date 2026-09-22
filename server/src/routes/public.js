@@ -40,6 +40,16 @@ function calibration() {
   return cachedCalibration
 }
 
+// 区域名标签的落点：优先用运行时可挂载的文件；读不到就返回空数组，
+// 前端会回退到构建时内联的那份（packages/shared/data/region-positions.json）。
+function regionPositions() {
+  try {
+    return readJsonFile(config.regionPositionsFile, '区域位置文件')
+  } catch {
+    return []
+  }
+}
+
 // bootstrap 内容是「数据变了才变」，用 ETag 让浏览器复用缓存
 function computeEtag(payload) {
   const hash = crypto.createHash('sha1')
@@ -94,6 +104,7 @@ export function registerPublicRoutes(app) {
     const payload = {
       map: mapConfig(),
       calibration: calibration(),
+      regionPositions: regionPositions(),
       categories: listCategories(),
       locations,
       stats: {

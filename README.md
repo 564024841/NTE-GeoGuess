@@ -207,6 +207,11 @@ npm run tiles:fetch        # 拉到仓库同级的 MapSource/tiles（约 30MB）
 以后更新瓦片，**直接往这个宿主目录里覆盖文件即可**——服务端按请求读盘，上传完立即生效，
 不需要重建镜像、也不需要重启容器（想验证可以 `docker compose restart app` 看启动自检日志）。
 
+同理，**题库快照、坐标标定、区域落点**这些内容数据也不在 git 上维护：
+仓库里的 `packages/shared/data/*.json` 只是骨架，生产把它们放到宿主目录里挂进容器
+`/srv/data-json`（compose 默认已配好 `SHARED_DATA_HOST_DIR`），改文件即生效
+（其中题库快照需要 `FORCE_SEED=1` 重启一次让它重新导入）。
+
 更新流程：`git push` → Actions 构建并发布镜像 → 服务器上 `docker compose pull && docker compose up -d`。
 compose 已带 `com.centurylinklabs.watchtower.enable=true` 标签：若你的 watchtower 以 `--label-enable` 运行，
 它会自动拉新镜像并重启，无需手工干预。

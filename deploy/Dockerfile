@@ -53,6 +53,10 @@ ENV NODE_ENV=production \
     TILES_DIR=/srv/tiles \
     REQUIRE_TILES=0 \
     SEED_IMAGES_DIR=/srv/seed-images/locations \
+    # 内容数据：镜像里只带一份「最基本」的骨架，生产用 compose 挂载真实文件并覆盖下面三个路径
+    SEED_DATA_FILE=/app/packages/shared/data/map-data.json \
+    CALIBRATION_FILE=/app/packages/shared/data/navi-coordinate-calibration.json \
+    REGION_POSITIONS_FILE=/app/packages/shared/data/region-positions.json \
     ICONS_DIR=/srv/icons
 
 WORKDIR /app

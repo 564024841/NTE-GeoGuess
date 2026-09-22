@@ -69,6 +69,27 @@ npm run tiles:verify         # 校验完整性（z=0 应有 51 个 x 目录、�
 `REQUIRE_TILES=1`（compose 默认）时，宿主瓦片目录为空或不完整会让服务端**拒绝启动**，
 避免出现"服务起来了但底图全黑"。临时调试可以先设 `REQUIRE_TILES=0`。
 
+### 内容数据（题库 / 坐标标定 / 区域落点）也不走 git
+
+仓库里的 `packages/shared/data/*.json` 只是**最基本的骨架**，真正的数据放在宿主机上，
+由 compose 挂进容器 `/srv/data-json`（只读），并用环境变量指路：
+
+| 文件 | 容器内路径 | 环境变量 | 作用 |
+| --- | --- | --- | --- |
+| `map-data.json` | `/srv/data-json/map-data.json` | `SEED_DATA_FILE` | 内置题库快照（点位/题目/分类），首次启动 seed 导入 SQLite |
+| `navi-coordinate-calibration.json` | `/srv/data-json/navi-coordinate-calibration.json` | `CALIBRATION_FILE` | 坐标标定，`/api/bootstrap` 下发给前端做地图↔游戏坐标换算 |
+| `region-positions.json` | `/srv/data-json/region-positions.json` | `REGION_POSITIONS_FILE` | 地图上区域名标签的落点 |
+
+```yaml
+    volumes:
+      - ${SHARED_DATA_HOST_DIR:-../shared-data}:/srv/data-json:ro
+```
+
+**更新这些数据**：直接覆盖宿主目录里的文件。
+题库快照（`map-data.json`）改了之后需要让它重新导入（seed 只在 `meta.seed_version` 不匹配时跑）：
+临时加 `FORCE_SEED=1` 重启一次，或删掉 `DATA_DIR` 下那个 SQLite 再重启；
+标定与区域落点则是**下个请求即生效**（服务端运行时读取）。
+
 ---
 
 ## 方式一：Docker Compose（推荐）
@@ -193,7 +214,7 @@ ADMIN_PASSWORD=...
 | `REQUIRE_TILES` | `false` | `1` = 瓦片缺失/不完整时拒绝启动（compose 默认 `1`） |
 | `TILE_URL_TEMPLATE` | `/mapsource-tiles/{z}/{x}/{y}.jpg` | 下发给前端的瓦片 URL |
 | `TILE_REDIRECT_BASE` | 空 | 填了则瓦片 302 到该地址（对象存储/CDN）；留空即完全本地 |
-| `SEED_DATA_FILE` / `CALIBRATION_FILE` | 仓库内 JSON | 内置题库快照与坐标标定 |
+| `SEED_DATA_FILE` / `CALIBRATION_FILE` / `REGION_POSITIONS_FILE` | 镜像内骨架 JSON | 题库快照 / 坐标标定 / 区域落点；生产用挂载覆盖（compose 默认指向 `/srv/data-json/*`） |
 | `SEED_IMAGES_DIR` / `ICONS_DIR` | 仓库内目录 | 内置截图与分类图标 |
 | `COOKIE_SECURE` | `false` | HTTPS 部署必须设 `true` |
 | `SESSION_TTL_HOURS` | `12` | 后台会话有效期 |
